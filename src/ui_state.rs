@@ -218,20 +218,12 @@ impl State
 
     pub fn draw<B: Backend>(&mut self, mut f: Frame<B>)
     {
-        /*
-        let debug_chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .margin(1)
-            .constraints([Constraint::Percentage(80), Constraint::Length(20)].as_ref())
-            .split(f.size());
-        */
-
         let chunks = Layout::default()
             .direction(Direction::Horizontal)
             .margin(0)
             .constraints(
                 [
-                    Constraint::Length(55),
+                    // Constraint::Length(55),
                     Constraint::Length(70),
                     Constraint::Percentage(100),
                 ]
@@ -239,12 +231,11 @@ impl State
             )
             .split(f.size());
 
-        // self.debug.draw(&mut f, debug_chunks[1]);
-        self.connections.draw(&mut f, chunks[0]);
-        self.requests.draw(&mut f, chunks[1]);
+        // self.connections.draw(&mut f, chunks[0]);
+        self.requests.draw(&mut f, chunks[0]);
 
         if let Some(request) = self.requests.selected_mut() {
-            request.draw(&mut f, chunks[2]);
+            request.draw(&mut f, chunks[1]);
         }
     }
 }
@@ -416,18 +407,20 @@ impl RequestData
             .borders(Borders::ALL);
         f.render_widget(block, chunk);
 
-        let chunks = Layout::default()
+        let details_chunks = Layout::default()
             .direction(Direction::Vertical)
             .margin(0)
-            .constraints(
-                [
-                    Constraint::Length(6),
-                    Constraint::Percentage(50),
-                    Constraint::Percentage(50),
-                ]
-                .as_ref(),
-            )
+            .constraints([Constraint::Length(6), Constraint::Percentage(50)].as_ref())
             .split(block.inner(chunk));
+        let mut c = details_chunks[1];
+        c.x -= 1;
+        c.width += 2;
+        c.height += 1;
+        let req_resp_chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .margin(0)
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
+            .split(block.inner(c));
 
         let duration = match self.end_timestamp {
             None => "(Pending)".to_string(),
@@ -446,14 +439,14 @@ impl RequestData
             Text::raw(format!(" Duration:   {}\n", duration)),
         ];
         let details = Paragraph::new(text.iter());
-        f.render_widget(details, chunks[0]);
+        f.render_widget(details, details_chunks[0]);
 
         let text = self.request_data.as_text();
         let request_title = format!("Request Data ({} bytes)", self.request_size);
         let request_data = Paragraph::new(text.iter())
             .block(Block::default().title(&request_title).borders(Borders::ALL))
             .wrap(false);
-        f.render_widget(request_data, chunks[1]);
+        f.render_widget(request_data, req_resp_chunks[0]);
 
         let text = self.response_data.as_text();
         let response_title = format!("Response Data ({} bytes)", self.response_size);
@@ -464,7 +457,7 @@ impl RequestData
                     .borders(Borders::ALL),
             )
             .wrap(false);
-        f.render_widget(response_data, chunks[2]);
+        f.render_widget(response_data, req_resp_chunks[1]);
     }
 }
 

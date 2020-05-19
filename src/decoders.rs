@@ -146,7 +146,7 @@ pub enum ProtobufValue
     Bytes(Bytes),
     Message(Box<ProtobufMessage>),
     Enum(usize),
-    Invalid(Bytes),
+    Invalid(ValueType, Bytes),
 
     UnknownVarint(u128),
     Unknown64(u64),
@@ -163,7 +163,7 @@ impl ProtobufValue
     ) -> Result<ProtobufValue, ProtobufValue>
     {
         Self::parse_maybe(data, vt, pb)
-            .ok_or_else(|| ProtobufValue::Invalid(Bytes::copy_from_slice(data)))
+            .ok_or_else(|| ProtobufValue::Invalid(vt.clone(), Bytes::copy_from_slice(data)))
     }
 
     fn parse_maybe(data: &mut &[u8], vt: &ValueType, pb: &Protobuf) -> Option<ProtobufValue>
@@ -226,6 +226,9 @@ impl ProtobufValue
             1 => ProtobufValue::Unknown64(u64::from_le_bytes(into_8_bytes(data)?)),
             2 => {
                 let length = usize::from_unsigned_varint(data)?;
+                if length > data.len() {
+                    return None;
+                }
                 let (consumed, remainder) = data.split_at(length);
                 *data = remainder;
                 ProtobufValue::UnknownLengthDelimited(Bytes::copy_from_slice(consumed))
@@ -253,7 +256,7 @@ impl ProtobufValue
             Self::Bool(v) => Text::raw(format!("{}", v)),
             Self::String(v) => Text::raw(format!("{:?}", v)),
             Self::Bytes(v) => Text::raw(format!("{:?}", v)),
-            Self::Invalid(v) => Text::raw(format!("!! {:?}", v)),
+            Self::Invalid(vt, v) => Text::raw(format!("!! {:?} -> {:?}", vt, v)),
             Self::Enum(v) => Text::raw(format!("{}", v)),
 
             Self::UnknownVarint(v) => Text::raw(format!("! {}", v)),
@@ -307,7 +310,7 @@ fn read_bytes(data: &mut &[u8]) -> Option<Bytes>
 {
     let original = *data;
     let len = usize::from_unsigned_varint(data)?;
-    if len >= data.len() {
+    if len > data.len() {
         *data = original;
         return None;
     }
@@ -336,6 +339,7 @@ impl ProtobufMessage
         };
 
         loop {
+            let l = data.len();
             if data.len() == 0 {
                 break;
             }
@@ -358,7 +362,10 @@ impl ProtobufMessage
                 None => match ProtobufValue::parse_unknown(&mut data, field_type) {
                     Some(v) => v,
                     None => {
-                        let invalid = ProtobufValue::Invalid(Bytes::copy_from_slice(data));
+                        let invalid = ProtobufValue::Invalid(
+                            ValueType::Unknown(format!("f:{},{}", field_type, l)),
+                            Bytes::copy_from_slice(data),
+                        );
                         data = &[];
                         invalid
                     }

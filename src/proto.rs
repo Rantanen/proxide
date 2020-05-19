@@ -582,7 +582,7 @@ pub struct EnumField
     pub value: String,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum ValueType
 {
     Double,

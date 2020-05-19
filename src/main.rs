@@ -21,7 +21,7 @@ async fn handle_socket(
     src_addr: SocketAddr,
 ) -> Result<(), Box<dyn Error>>
 {
-    let server_stream = TcpStream::connect("88.114.160.184:7766").await?;
+    let server_stream = TcpStream::connect("127.0.0.1:7766").await?;
 
     let tx_clone = tx.clone();
     let mut connection =
@@ -56,27 +56,33 @@ pub async fn main() -> Result<(), Box<dyn Error>>
         move || ui::main(abort_tx, ui_tx, ui_rx, proto)
     });
 
-    let mut listener = TcpListener::bind("0.0.0.0:8888").await.unwrap();
+    let mut listener_ipv4 = TcpListener::bind("0.0.0.0:8888").await.unwrap();
+    let mut listener_ipv6 = TcpListener::bind("[::1]:8888").await.unwrap();
 
     loop {
         tokio::select! {
             _ = &mut abort_rx => {
                 break Ok(());
             },
-            result = listener.accept() => {
-                if let Ok((socket, src_addr)) = result {
-                    debug!("New connection from {:?}", src_addr);
-                    let tx = ui_tx.clone();
-                    tokio::spawn(async move {
-                        let tx = tx;
-                        match handle_socket(tx, socket, src_addr).await {
-                            Ok(..) => {}
-                            Err(e) => debug!("Error {:?}", e),
-                        }
-                    });
-                }
-            },
+            result = listener_ipv4.accept() => new_connection(ui_tx.clone(), result),
+            result = listener_ipv6.accept() => new_connection(ui_tx.clone(), result),
         }
+    }
+}
+
+fn new_connection(
+    tx: Sender<ui_state::UiEvent>,
+    result: Result<(TcpStream, SocketAddr), std::io::Error>,
+)
+{
+    if let Ok((socket, src_addr)) = result {
+        debug!("New connection from {:?}", src_addr);
+        tokio::spawn(async move {
+            match handle_socket(tx, socket, src_addr).await {
+                Ok(..) => {}
+                Err(e) => debug!("Error {:?}", e),
+            }
+        });
     }
 }
 
