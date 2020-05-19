@@ -1,98 +1,111 @@
-
+use log::debug;
 use std::error::Error;
-use h2::{server, client, RecvStream, SendStream};
-use http::{Request, Response, StatusCode};
+use std::io::Read;
+use std::net::SocketAddr;
+use std::sync::mpsc::Sender;
 use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::oneshot;
 
-async fn pipe_stream( source : &mut RecvStream, target : &mut SendStream<bytes::Bytes> ) -> Result<bytes::Bytes, Box<dyn Error>> {
+mod connection;
+mod decoders;
+mod error;
+mod proto;
+mod ui;
+mod ui_state;
 
-    let mut chunks = bytes::Bytes::new();
-    // target.send_data( bytes::Bytes::from_static( b"\0" ), false )?;
-    while let Some( data ) = source.data().await {
-        let b = data?;
-        chunks.extend_from_slice( &b );
-        target.send_data( b, source.is_end_stream() )?;
-    }
-    let trailers = source.trailers().await?;
-    if let Some( trailers ) = trailers {
-        target.send_trailers( trailers )?;
-    }
+use connection::ProxyConnection;
 
-    Ok(chunks)
-}
+async fn handle_socket(
+    tx: Sender<ui_state::UiEvent>,
+    client_stream: TcpStream,
+    src_addr: SocketAddr,
+) -> Result<(), Box<dyn Error>>
+{
+    let server_stream = TcpStream::connect("192.168.0.103:7766").await?;
 
-pub async fn handle_socket( socket : TcpStream ) -> Result<(), Box<dyn Error>> {
+    let tx_clone = tx.clone();
+    let mut connection =
+        ProxyConnection::new(client_stream, server_stream, src_addr, tx_clone).await?;
+    connection.run(tx).await?;
 
-    println!( "New socket" );
-    let mut client_h2 = server::handshake( socket ).await?;
-    println!( "Handshaked" );
-    let server_tcp = TcpStream::connect( "127.0.0.1:8890" ).await?;
-    println!( "TCP connected" );
-    let (server_h2, server_conn) = client::handshake(server_tcp).await?;
-    println!( "Server connected" );
-
-    tokio::spawn( async move {
-        match server_conn.await {
-            Ok(..) => {},
-            Err( e ) => eprintln!( "Error: {:?}", e )
-        }
-    });
-
-    let mut server_h2 = server_h2.ready().await?;
-    while let Some( request ) = client_h2.accept().await {
-
-        let (request, mut respond ) = match request {
-            Ok( r ) => r,
-            Err( e ) => {
-                println!( "Connection error: {:?}", e );
-                return Ok(())
-            }
-        };
-
-        println!( "Received {:?}", request );
-        let (request, mut request_body) = request.into_parts();
-        let request = Request::from_parts( request, () );
-
-        println!( "Relaying request" );
-        let (response, mut server_stream) = server_h2.send_request( request, false ).unwrap();
-        println!( "Relaying body" );
-        let request_data = pipe_stream( &mut request_body, &mut server_stream ).await?;
-        println!( "Body: {:?}", request_data );
-
-        let response = response.await?;
-        println!( "Received response {:?}", response );
-        let (response, mut response_body) = response.into_parts();
-        let response = Response::from_parts( response, () );
-
-        println!( "Relaying response" );
-        let mut client_stream = respond.send_response( response, false )?;
-        println!( "Relaying body" );
-        let response_data = pipe_stream( &mut response_body, &mut client_stream ).await?;
-
-    }
     Ok(())
 }
 
 #[tokio::main]
-pub async fn main()-> Result<(), Box<dyn Error>> {
+pub async fn main() -> Result<(), Box<dyn Error>>
+{
+    // env_logger::init();
 
-    env_logger::init();
-    log::info!("Test");
+    let (abort_tx, mut abort_rx) = oneshot::channel::<()>();
+    let (ui_tx, ui_rx) = std::sync::mpsc::channel();
 
-    let mut listener = TcpListener::bind( "0.0.0.0:8888" ).await.unwrap();
+    let logger = Logger(std::sync::Mutex::new(ui_tx.clone()));
+    log::set_boxed_logger(Box::new(logger))
+        .map(|()| log::set_max_level(log::LevelFilter::Debug))
+        .unwrap();
+
+    let proto = {
+        let mut proto_file = String::new();
+        let mut f = std::fs::File::open(std::env::args().into_iter().nth(1).unwrap().as_str())?;
+        f.read_to_string(&mut proto_file)?;
+        proto::parse(&proto_file)?
+    };
+
+    let _ = std::thread::spawn({
+        let ui_tx = ui_tx.clone();
+        move || ui::main(abort_tx, ui_tx, ui_rx, proto)
+    });
+
+    let mut listener = TcpListener::bind("0.0.0.0:8888").await.unwrap();
 
     loop {
-
-        if let Ok( (socket, src_addr) ) = listener.accept().await {
-
-            println!( "New connection from {:?}", src_addr );
-            tokio::spawn( async {
-
-                match handle_socket( socket ).await {
-                    Ok(..) => {}
-                    Err( e ) => println!( "Error {:?}", e ),
+        tokio::select! {
+            _ = &mut abort_rx => {
+                break Ok(());
+            },
+            result = listener.accept() => {
+                if let Ok((socket, src_addr)) = result {
+                    debug!("New connection from {:?}", src_addr);
+                    let tx = ui_tx.clone();
+                    tokio::spawn(async move {
+                        let tx = tx;
+                        match handle_socket(tx, socket, src_addr).await {
+                            Ok(..) => {}
+                            Err(e) => debug!("Error {:?}", e),
+                        }
+                    });
                 }
-            } );
+            },
         }
     }
+}
+
+struct Logger(std::sync::Mutex<Sender<ui_state::UiEvent>>);
+impl log::Log for Logger
+{
+    fn enabled(&self, metadata: &log::Metadata) -> bool
+    {
+        true
+    }
+
+    fn log(&self, record: &log::Record)
+    {
+        if !record.target().starts_with("proxide") {
+            return;
+        }
+
+        self.0
+            .lock()
+            .expect("Mutex poisoned")
+            .send(ui_state::UiEvent::LogMessage(format!(
+                "{}:{} {}: {}\n",
+                record.file().unwrap_or_else(|| "<Unknown>"),
+                record.line().unwrap_or_else(|| 0),
+                record.metadata().level(),
+                record.args()
+            )))
+            .unwrap();
+    }
+
+    fn flush(&self) {}
 }

@@ -1,0 +1,46 @@
+
+syntax = "proto3";
+
+message HelloRequest {
+	string name = 1;
+}
+
+message HelloResponse {
+	string message = 1;
+}
+
+message ComplexType {
+    message InnerType {
+        message DoubleInnerType {
+            string value = 3;
+        }
+        string value = 3;
+    }
+    message AnotherType {
+        InnerType.DoubleInnerType sibling = 3;
+    }
+	repeated string name = 10;
+	repeated string name2 = 010;
+	repeated string name3 = 0x010;
+    InnerType inner = 100;
+}
+
+message DependentType {
+	repeated string name = 1;
+    oneof Foo {
+        string names = 2;
+    }
+    ComplexType.InnerType inner = 100;
+}
+
+message ConflictingType {
+    message DependentType {
+        string name2 = 2;
+    }
+    DependentType conflict = 1;
+}
+
+service HelloWorld {
+	rpc SayHello( HelloRequest ) returns ( HelloResponse ) {}
+	rpc SayMultipleHello( stream HelloRequest ) returns ( stream HelloResponse ) {}
+}
