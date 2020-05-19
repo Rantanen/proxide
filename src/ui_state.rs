@@ -84,6 +84,13 @@ pub enum Window
     Requests,
 }
 
+pub enum HandleResult
+{
+    Ignore,
+    Update,
+    Quit,
+}
+
 impl State
 {
     pub fn new(pb: Protobuf) -> State
@@ -99,20 +106,26 @@ impl State
         }
     }
 
-    pub fn handle(&mut self, e: UiEvent) -> bool
+    pub fn handle(&mut self, e: UiEvent) -> HandleResult
     {
         match e {
             UiEvent::NewConnection(e) => self.on_new_connection(e),
             UiEvent::NewRequest(e) => self.on_new_request(e),
             UiEvent::RequestStatus(e) => self.on_request_status(e),
-            UiEvent::RequestData(e) => self.on_request_data(e),
-            UiEvent::ResponseData(e) => self.on_response_data(e),
+            UiEvent::RequestData(e) => {
+                self.on_request_data(e);
+                return HandleResult::Ignore;
+            }
+            UiEvent::ResponseData(e) => {
+                self.on_response_data(e);
+                return HandleResult::Ignore;
+            }
             UiEvent::Crossterm(e) => return self.on_input(e),
-            UiEvent::LogMessage(m) => self.debug.msgs.push_back(m),
+            // UiEvent::LogMessage(m) => self.debug.msgs.push_back(m),
             _ => {}
         }
 
-        true
+        return HandleResult::Update;
     }
 
     fn on_new_connection(&mut self, e: NewConnectionEvent)
@@ -121,6 +134,7 @@ impl State
             uuid: e.uuid,
             client_addr: e.client_addr,
             start_timestamp: Local::now(),
+            end_timestamp: None,
             status: Status::InProgress,
         };
         self.connections.push(e.uuid, data);
@@ -129,7 +143,7 @@ impl State
     fn on_new_request(&mut self, e: NewRequestEvent)
     {
         let (req, resp) = match e.headers["Content-Type"].to_str().unwrap() {
-            // "application/grpc" => GrpcDecoder::decoders(&e.uri, self.protobuf.clone()),
+            "application/grpc" => GrpcDecoder::decoders(&e.uri, self.protobuf.clone()),
             _ => RawDecoder::decoders(),
         };
 
@@ -143,7 +157,10 @@ impl State
                 headers: e.headers,
                 status: Status::Pending,
                 start_timestamp: Local::now(),
+                end_timestamp: None,
+                request_size: 0,
                 request_data: req,
+                response_size: 0,
                 response_data: resp,
             },
         );
@@ -153,6 +170,9 @@ impl State
     {
         let request = self.requests.get_mut_by_uuid(e.uuid);
         if let Some(request) = request {
+            if e.status == Status::Failed || e.status == Status::Succeeded {
+                request.end_timestamp = Some(Local::now());
+            }
             request.status = e.status;
         }
     }
@@ -161,6 +181,7 @@ impl State
     {
         let request = self.requests.get_mut_by_uuid(e.uuid);
         if let Some(request) = request {
+            request.request_size += e.data.len();
             request.request_data.extend(e.data);
         }
     }
@@ -169,11 +190,12 @@ impl State
     {
         let request = self.requests.get_mut_by_uuid(e.uuid);
         if let Some(request) = request {
+            request.response_size += e.data.len();
             request.response_data.extend(e.data);
         }
     }
 
-    fn on_input(&mut self, e: CTEvent) -> bool
+    fn on_input(&mut self, e: CTEvent) -> HandleResult
     {
         // Handle active window input first.
         let handled = match self.active_window {
@@ -184,23 +206,25 @@ impl State
         if !handled {
             match e {
                 CTEvent::Key(key) => match key.code {
-                    KeyCode::Char('q') => return false,
+                    KeyCode::Char('q') => return HandleResult::Quit,
                     _ => {}
                 },
                 _ => {}
             };
         }
 
-        true
+        HandleResult::Update
     }
 
     pub fn draw<B: Backend>(&mut self, mut f: Frame<B>)
     {
+        /*
         let debug_chunks = Layout::default()
             .direction(Direction::Vertical)
             .margin(1)
             .constraints([Constraint::Percentage(80), Constraint::Length(20)].as_ref())
             .split(f.size());
+        */
 
         let chunks = Layout::default()
             .direction(Direction::Horizontal)
@@ -213,9 +237,9 @@ impl State
                 ]
                 .as_ref(),
             )
-            .split(debug_chunks[0]);
+            .split(f.size());
 
-        self.debug.draw(&mut f, debug_chunks[1]);
+        // self.debug.draw(&mut f, debug_chunks[1]);
         self.connections.draw(&mut f, chunks[0]);
         self.requests.draw(&mut f, chunks[1]);
 
@@ -405,6 +429,11 @@ impl RequestData
             )
             .split(block.inner(chunk));
 
+        let duration = match self.end_timestamp {
+            None => "(Pending)".to_string(),
+            Some(s) => (s - self.start_timestamp).to_string(),
+        };
+
         let text = vec![
             Text::raw("\n"),
             Text::raw(format!(" Method:     {}\n", self.method)),
@@ -414,22 +443,24 @@ impl RequestData
                 self.start_timestamp.to_string()
             )),
             Text::raw(format!(" Status:     {}\n", self.status.to_string())),
-            Text::raw(format!(" UUID:       {}\n", self.uuid)),
+            Text::raw(format!(" Duration:   {}\n", duration)),
         ];
         let details = Paragraph::new(text.iter());
         f.render_widget(details, chunks[0]);
 
         let text = self.request_data.as_text();
+        let request_title = format!("Request Data ({} bytes)", self.request_size);
         let request_data = Paragraph::new(text.iter())
-            .block(Block::default().title("Request Data").borders(Borders::ALL))
+            .block(Block::default().title(&request_title).borders(Borders::ALL))
             .wrap(false);
         f.render_widget(request_data, chunks[1]);
 
         let text = self.response_data.as_text();
+        let response_title = format!("Response Data ({} bytes)", self.response_size);
         let response_data = Paragraph::new(text.iter())
             .block(
                 Block::default()
-                    .title("Response Data")
+                    .title(&response_title)
                     .borders(Borders::ALL),
             )
             .wrap(false);
@@ -442,6 +473,7 @@ pub struct ConnectionData
     uuid: Uuid,
     client_addr: SocketAddr,
     start_timestamp: DateTime<Local>,
+    end_timestamp: Option<DateTime<Local>>,
     status: Status,
 }
 
@@ -453,8 +485,11 @@ pub struct RequestData
     uri: Uri,
     headers: HeaderMap,
     start_timestamp: DateTime<Local>,
+    end_timestamp: Option<DateTime<Local>>,
     status: Status,
+    request_size: usize,
     request_data: Box<dyn Decoder>,
+    response_size: usize,
     response_data: Box<dyn Decoder>,
 }
 
@@ -485,7 +520,7 @@ pub enum Protocol
     Grpc(String, String),
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum Status
 {
     Pending,

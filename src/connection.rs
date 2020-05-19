@@ -52,9 +52,13 @@ impl ProxyConnection
         ui: Sender<UiEvent>,
     ) -> Result<ProxyConnection>
     {
-        let client_connection = server::handshake(client).await.context(ClientError {
-            scenario: "client handshake",
-        })?;
+        let client_connection = server::Builder::new()
+            .initial_window_size(1_000_000)
+            .handshake(client)
+            .await
+            .context(ClientError {
+                scenario: "client handshake",
+            })?;
         let (server_stream, server_connection) =
             client::handshake(server).await.context(ServerError {
                 scenario: "server handshake",
@@ -247,38 +251,40 @@ impl ProxyRequest
             })?;
 
             let (response_head, response_body) = response.into_parts();
+            log::info!("{} headers: {:?}", uuid, response_head.headers);
 
             let response = Response::from_parts(response_head, ());
 
-            let mut client_stream =
-                client_response
-                    .send_response(response, false)
-                    .context(ClientError {
-                        scenario: "sending response",
-                    })?;
-
-            log::info!("{}: Server stream starting", uuid);
-            let trailers = pipe_stream(
-                response_body,
-                &mut client_stream,
-                ui,
-                |ui, bytes| {
-                    ui.send(UiEvent::ResponseData(ResponseDataEvent {
-                        uuid: uuid,
-                        data: bytes.clone(),
-                    }))
-                    .unwrap();
-                },
-                true,
-            )
-            .await?;
-            log::info!("{}: Server stream ended", uuid);
-
-            if let Some(trailers) = trailers {
-                client_stream.send_trailers(trailers).context(ServerError {
-                    scenario: "sending trailers",
+            let mut client_stream = client_response
+                .send_response(response, response_body.is_end_stream())
+                .context(ClientError {
+                    scenario: "sending response",
                 })?;
-                log::info!("{}: Server trailers sent", uuid);
+
+            if !response_body.is_end_stream() {
+                log::info!("{}: Server stream starting", uuid);
+                let trailers = pipe_stream(
+                    response_body,
+                    &mut client_stream,
+                    ui,
+                    |ui, bytes| {
+                        ui.send(UiEvent::ResponseData(ResponseDataEvent {
+                            uuid: uuid,
+                            data: bytes.clone(),
+                        }))
+                        .unwrap();
+                    },
+                    true,
+                )
+                .await?;
+                log::info!("{}: Server stream ended", uuid);
+
+                if let Some(trailers) = trailers {
+                    client_stream.send_trailers(trailers).context(ServerError {
+                        scenario: "sending trailers",
+                    })?;
+                    log::info!("{}: Server trailers sent", uuid);
+                }
             }
 
             Ok(())
@@ -312,14 +318,18 @@ async fn pipe_stream<F: Fn(Sender<UiEvent>, &bytes::Bytes)>(
             scenario: "reading content",
         })?;
         f(ui.clone(), &b);
+        let size = b.len();
         target
             .send_data(b, source.is_end_stream())
             .context(ServerError {
                 scenario: "writing content",
             })?;
+        source.flow_control().release_capacity(size);
     }
 
-    Ok(source.trailers().await.context(ClientError {
+    let t = source.trailers().await.context(ClientError {
         scenario: "receiving trailers",
-    })?)
+    })?;
+    log::info!("{:?}", t);
+    Ok(t)
 }

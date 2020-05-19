@@ -12,7 +12,7 @@ use tokio::sync::oneshot;
 use tui::{backend::CrosstermBackend, Terminal};
 
 use crate::proto::Protobuf;
-use crate::ui_state::{State, UiEvent};
+use crate::ui_state::{HandleResult, State, UiEvent};
 
 #[derive(Debug, Snafu)]
 #[snafu(visibility(pub(crate)))]
@@ -58,10 +58,11 @@ pub fn main(
 
     loop {
         let e = ui_rx.recv().unwrap();
-        if !state.handle(e) {
-            break;
+        match state.handle(e) {
+            HandleResult::Ignore => {}
+            HandleResult::Update => terminal.draw(|f| state.draw(f)).unwrap(),
+            HandleResult::Quit => break,
         }
-        terminal.draw(|f| state.draw(f)).unwrap();
     }
 
     abort_tx.send(()).unwrap();

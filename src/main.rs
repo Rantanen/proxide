@@ -21,7 +21,7 @@ async fn handle_socket(
     src_addr: SocketAddr,
 ) -> Result<(), Box<dyn Error>>
 {
-    let server_stream = TcpStream::connect("192.168.0.103:7766").await?;
+    let server_stream = TcpStream::connect("88.114.160.184:7766").await?;
 
     let tx_clone = tx.clone();
     let mut connection =
@@ -31,7 +31,7 @@ async fn handle_socket(
     Ok(())
 }
 
-#[tokio::main]
+#[tokio::main(core_threads = 4)]
 pub async fn main() -> Result<(), Box<dyn Error>>
 {
     // env_logger::init();
