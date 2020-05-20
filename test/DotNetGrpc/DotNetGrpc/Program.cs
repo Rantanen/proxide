@@ -6,6 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Google.Protobuf;
 using Grpc.Core;
+using Test;
 
 namespace DotNetGrpc
 {
@@ -13,7 +14,7 @@ namespace DotNetGrpc
     {
         static void Main( string[] args )
         {
-            var clientPort = 8888;
+            var clientPort = 5555;
             var serverPort = 8890;
             if( args.Length > 0 )
                 serverPort = clientPort = int.Parse( args[ 0 ] );
@@ -45,30 +46,91 @@ namespace DotNetGrpc
 
         public static async Task DoCalls(HelloWorld.HelloWorldClient client)
         {
-            // var multiHelloStream = client.SayMultipleHello();
-            for( int i = 0; i < 50; i++ )
-            {
-                var response = await client.SayHelloAsync( new HelloRequest
-                    {Name = $"World{i}!", Data = ByteString.CopyFromUtf8( new string('x', 1000 )), B = true });
-                Console.WriteLine( $"Received '{response.Message}'" );
-                // await Task.Delay( 500 );
-                // await multiHelloStream.RequestStream.WriteAsync( new HelloRequest
-                // {
-                    // Name = "Async " + i
-                // } );
-                // await multiHelloStream.ResponseStream.MoveNext();
-                // Console.WriteLine( $"Received '{multiHelloStream.ResponseStream.Current.Message}' from stream" );
-            }
+            var response = await client.SayHelloAsync( new HelloRequest {Name = $"World"} );
+            Console.ReadKey();
 
-            // await multiHelloStream.RequestStream.CompleteAsync();
+            var complexStream = client.ComplexTypesStream();
+            var stream = complexStream.RequestStream;
+            _ = Task.Run( async () =>
+            {
+                while( await complexStream.ResponseStream.MoveNext() ) ;
+            } );
+            await stream.WriteAsync( new ComplexTypeStream
+            {
+                SetValue = new ComplexType
+                {
+                    SingleString = "Foo"
+                }
+            });
+            Console.ReadKey();
+            await stream.WriteAsync( new ComplexTypeStream { GetValue = true });
+            Console.ReadKey();
+            await stream.WriteAsync( new ComplexTypeStream { GetValue = true });
+            Console.ReadKey();
+            await stream.WriteAsync( new ComplexTypeStream
+            {
+                SetValue = new ComplexType
+                {
+                    ManyStrings = {"Foo", "Bar", "Baz"},
+                    Children =
+                    {
+                        new ChildType
+                        {
+                            Name = "Apple",
+                            NameUtf16 = ByteString.CopyFrom( Encoding.Unicode.GetBytes( "Apple" ) )
+                        },
+                        new ChildType
+                        {
+                            Name = "Orange",
+                            NameUtf16 = ByteString.CopyFrom( Encoding.Unicode.GetBytes( "Orange" ) )
+                        }
+                    },
+                }
+            } );
+            Console.ReadKey();
+            await stream.WriteAsync( new ComplexTypeStream { GetValue = true });
+            Console.ReadKey();
+            await stream.WriteAsync( new ComplexTypeStream { Close = true });
         }
 
         public override async Task< HelloResponse > SayHello( HelloRequest request, ServerCallContext context )
         {
             return new HelloResponse
             {
-                Message = $"Hello {request.Name} {request.B}",
+                Message = $"Hello {request.Name}!",
             };
+        }
+        public override async Task SayMultipleHello( IAsyncStreamReader< HelloRequest > requestStream, IServerStreamWriter< HelloResponse > responseStream,
+            ServerCallContext context )
+        {
+            while( await requestStream.MoveNext())
+            {
+                await responseStream.WriteAsync( new HelloResponse
+                {
+                    Message = "Hellooooo " + requestStream.Current.Name
+                } );
+            }
+        }
+
+        public override async Task< ComplexType > ComplexTypes( ComplexType request, ServerCallContext context )
+        {
+            return request;
+        }
+
+        public override async Task ComplexTypesStream( IAsyncStreamReader< ComplexTypeStream > requestStream, IServerStreamWriter< ComplexType > responseStream,
+            ServerCallContext context )
+        {
+            ComplexType stored = null;
+            while( await requestStream.MoveNext() )
+            {
+                if( requestStream.Current.Close )
+                    return;
+
+                if( requestStream.Current.GetValue )
+                    await responseStream.WriteAsync( stored );
+                else if( requestStream.Current.SetValue != null )
+                    stored = requestStream.Current.SetValue;
+            }
         }
     }
 }

@@ -112,6 +112,16 @@ impl ProtobufType
 #[grammar = "proto.pest"]
 struct ProtoParser;
 
+pub fn empty() -> Protobuf
+{
+    Protobuf {
+        types: vec![],
+        types_by_name: HashMap::new(),
+        package: None,
+        services: vec![],
+    }
+}
+
 pub fn parse(s: &str) -> Result<Protobuf>
 {
     let pairs = ProtoParser::parse(Rule::proto, s).context(ParseError {})?;

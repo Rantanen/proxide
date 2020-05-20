@@ -114,6 +114,7 @@ impl Decoder for GrpcDecoder
         let mut output = vec![];
         for v in &self.get_messages(&msg.content).unwrap() {
             v.describe(0, &mut output, self.pb.as_ref());
+            output.push(Text::raw("\n"));
         }
         output
     }

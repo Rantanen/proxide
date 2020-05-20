@@ -1,3 +1,4 @@
+use clap::{App, Arg};
 use log::debug;
 use std::error::Error;
 use std::io::Read;
@@ -19,9 +20,10 @@ async fn handle_socket(
     tx: Sender<ui_state::UiEvent>,
     client_stream: TcpStream,
     src_addr: SocketAddr,
+    target_port: &str,
 ) -> Result<(), Box<dyn Error>>
 {
-    let server_stream = TcpStream::connect("127.0.0.1:7766").await?;
+    let server_stream = TcpStream::connect(format!("127.0.0.1:{}", target_port)).await?;
 
     let tx_clone = tx.clone();
     let mut connection =
@@ -43,14 +45,45 @@ pub async fn main() -> Result<(), Box<dyn Error>>
     )
     .unwrap();
 
+    let matches = App::new("Proxide - HTTP2 debugging proxy")
+        .version(env!("CARGO_PKG_VERSION"))
+        .author("Mikko Rantanen <rantanen@jubjubnest.net>")
+        .arg(
+            Arg::with_name("listen")
+                .short("l")
+                .value_name("port")
+                .required(true)
+                .help("Specify listening port")
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("target")
+                .short("t")
+                .value_name("port")
+                .required(true)
+                .help("Specify target port")
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("proto")
+                .short("p")
+                .value_name("PROTO_FILE")
+                .help("Specify .proto file for decoding Protobuf messages")
+                .takes_value(true),
+        )
+        .get_matches();
+
     let (abort_tx, mut abort_rx) = oneshot::channel::<()>();
     let (ui_tx, ui_rx) = std::sync::mpsc::channel();
 
-    let proto = {
-        let mut proto_file = String::new();
-        let mut f = std::fs::File::open(std::env::args().into_iter().nth(1).unwrap().as_str())?;
-        f.read_to_string(&mut proto_file)?;
-        proto::parse(&proto_file)?
+    let proto = match matches.value_of("proto") {
+        Some(file_name) => {
+            let mut proto_file = String::new();
+            let mut f = std::fs::File::open(file_name)?;
+            f.read_to_string(&mut proto_file)?;
+            proto::parse(&proto_file)?
+        }
+        None => proto::empty(),
     };
 
     let _ = std::thread::spawn({
@@ -58,16 +91,22 @@ pub async fn main() -> Result<(), Box<dyn Error>>
         move || ui::main(abort_tx, ui_tx, ui_rx, proto)
     });
 
-    let mut listener_ipv4 = TcpListener::bind("0.0.0.0:8888").await.unwrap();
-    let mut listener_ipv6 = TcpListener::bind("[::1]:8888").await.unwrap();
+    let listen_port = matches.value_of("listen").unwrap();
+    let mut listener_ipv4 = TcpListener::bind(format!("0.0.0.0:{}", listen_port))
+        .await
+        .unwrap();
+    let mut listener_ipv6 = TcpListener::bind(format!("[::1]:{}", listen_port))
+        .await
+        .unwrap();
 
+    let target_port = matches.value_of("target").unwrap();
     loop {
         tokio::select! {
             _ = &mut abort_rx => {
                 break Ok(());
             },
-            result = listener_ipv4.accept() => new_connection(ui_tx.clone(), result),
-            result = listener_ipv6.accept() => new_connection(ui_tx.clone(), result),
+            result = listener_ipv4.accept() => new_connection(ui_tx.clone(), result, &target_port),
+            result = listener_ipv6.accept() => new_connection(ui_tx.clone(), result, &target_port),
         }
     }
 }
@@ -75,12 +114,13 @@ pub async fn main() -> Result<(), Box<dyn Error>>
 fn new_connection(
     tx: Sender<ui_state::UiEvent>,
     result: Result<(TcpStream, SocketAddr), std::io::Error>,
+    target_port: &str,
 )
 {
+    let target_port = target_port.to_string();
     if let Ok((socket, src_addr)) = result {
-        debug!("New connection from {:?}", src_addr);
         tokio::spawn(async move {
-            match handle_socket(tx, socket, src_addr).await {
+            match handle_socket(tx, socket, src_addr, &target_port).await {
                 Ok(..) => {}
                 Err(e) => debug!("Error {:?}", e),
             }

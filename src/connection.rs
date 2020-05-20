@@ -4,7 +4,7 @@ use futures::{join, prelude::*};
 use h2::{
     client::{self, ResponseFuture},
     server::{self, SendResponse},
-    RecvStream, SendStream,
+    Reason, RecvStream, SendStream,
 };
 use http::{HeaderMap, Request, Response};
 use log::error;
@@ -296,9 +296,9 @@ impl ProxyRequest
         let r = r1.and(r2);
         ui.send(UiEvent::RequestDone(RequestDoneEvent {
             uuid: self.uuid,
-            status: match r.is_ok() {
-                true => crate::ui_state::Status::Succeeded,
-                false => crate::ui_state::Status::Failed,
+            status: match fatal_error(&r) {
+                true => crate::ui_state::Status::Failed,
+                false => crate::ui_state::Status::Succeeded,
             },
             timestamp: Local::now(),
         }))
@@ -341,7 +341,6 @@ async fn pipe_stream(
     let t = source.trailers().await.context(ClientError {
         scenario: "receiving trailers",
     })?;
-    log::info!("{:?}", t);
     Ok(t)
 }
 
@@ -375,4 +374,19 @@ async fn notify_message_done(
         }
     }
     Ok(())
+}
+
+fn fatal_error<S>(r: &Result<S, Error>) -> bool
+{
+    match r {
+        Ok(_) => false,
+        Err(e) => match e {
+            Error::ServerError { source, .. } | Error::ClientError { source, .. } => {
+                match source.reason() {
+                    Some(Reason::NO_ERROR) => false,
+                    _ => true,
+                }
+            }
+        },
+    }
 }

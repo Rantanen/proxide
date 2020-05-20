@@ -21,3 +21,4 @@ uuid = { version = "*", features = [ "v4" ] }
 chrono = "*"
 pest = "*"
 pest_derive = "*"
+clap = "*"

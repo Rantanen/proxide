@@ -344,10 +344,7 @@ impl<B: Backend> ProxideUi<B>
             UiEvent::NewRequest(e) => self.state.on_new_request(e),
             UiEvent::NewResponse(e) => self.state.on_new_response(e),
             // UiEvent::RequestStatus(e) => self.state.on_request_status(e),
-            UiEvent::MessageData(e) => {
-                self.state.on_message_data(e);
-                return HandleResult::Ignore;
-            }
+            UiEvent::MessageData(e) => self.state.on_message_data(e),
             UiEvent::MessageDone(e) => self.state.on_message_done(e),
             UiEvent::RequestDone(e) => self.state.on_request_done(e),
             UiEvent::ConnectionClosed { .. } => {}
