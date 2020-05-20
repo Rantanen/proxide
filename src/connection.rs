@@ -1,5 +1,6 @@
 use bytes::Bytes;
-use futures::join;
+use chrono::prelude::*;
+use futures::{join, prelude::*};
 use h2::{
     client::{self, ResponseFuture},
     server::{self, SendResponse},
@@ -84,6 +85,7 @@ impl ProxyConnection
         ui.send(UiEvent::NewConnection(NewConnectionEvent {
             uuid: conn.uuid,
             client_addr: src_addr,
+            timestamp: Local::now(),
         }))
         .unwrap();
         Ok(conn)
@@ -141,6 +143,7 @@ impl ProxyConnection
 pub struct ProxyRequest
 {
     uuid: Uuid,
+    connection_uuid: Uuid,
     client_request: RecvStream,
     client_response: SendResponse<Bytes>,
     server_request: SendStream<Bytes>,
@@ -150,7 +153,7 @@ pub struct ProxyRequest
 impl ProxyRequest
 {
     pub fn new(
-        uuid_parent: Uuid,
+        connection_uuid: Uuid,
         client_request: Request<RecvStream>,
         client_response: SendResponse<Bytes>,
         server_stream: &mut client::SendRequest<Bytes>,
@@ -161,11 +164,12 @@ impl ProxyRequest
         let (client_head, client_request) = client_request.into_parts();
 
         ui.send(UiEvent::NewRequest(NewRequestEvent {
-            connection_uuid: uuid_parent,
+            connection_uuid,
             uuid: uuid,
             uri: client_head.uri.clone(),
             method: client_head.method.clone(),
             headers: client_head.headers.clone(),
+            timestamp: Local::now(),
         }))
         .unwrap();
 
@@ -180,6 +184,7 @@ impl ProxyRequest
 
         Ok(ProxyRequest {
             uuid,
+            connection_uuid,
             client_request,
             client_response,
             server_request,
@@ -189,12 +194,6 @@ impl ProxyRequest
 
     pub async fn execute(self, ui: Sender<UiEvent>) -> Result<()>
     {
-        ui.send(UiEvent::RequestStatus(RequestStatusEvent {
-            uuid: self.uuid,
-            status: crate::ui_state::Status::InProgress,
-        }))
-        .unwrap();
-
         // Acquire futures that are responsible for streaming the request and the response. These
         // are set up in their own futures to allow parallel request/response streaming to occur.
 
@@ -205,34 +204,29 @@ impl ProxyRequest
         let ui_temp = ui.clone();
         let request_future = async move {
             let ui = ui_temp;
-            log::info!("{}: Client stream starting", uuid);
             let trailers = pipe_stream(
                 client_request,
                 &mut server_request,
                 ui,
-                |ui, bytes| {
-                    ui.send(UiEvent::RequestData(RequestDataEvent {
-                        uuid: uuid,
-                        data: bytes.clone(),
-                    }))
-                    .unwrap();
-                },
+                uuid,
+                RequestPart::Request,
                 false,
             )
             .await?;
-            log::info!("{}: Client stream ended", uuid);
 
-            if let Some(trailers) = trailers {
+            if let Some(trailers) = trailers.clone() {
                 server_request
                     .send_trailers(trailers)
                     .context(ServerError {
                         scenario: "sending trailers",
                     })?;
-                log::info!("{}: Client trailers sent", uuid);
             }
-
-            Ok(())
-        };
+            Ok(trailers)
+        }
+        .then({
+            let ui = ui.clone();
+            move |r| notify_message_done(ui, uuid, r, RequestPart::Request)
+        });
 
         // Set up streaming the response to the client.
         //
@@ -243,6 +237,7 @@ impl ProxyRequest
         // call.
         let mut client_response = self.client_response;
         let server_response = self.server_response;
+        let connection_uuid = self.connection_uuid;
         let ui_temp = ui.clone();
         let response_future = async move {
             let ui = ui_temp;
@@ -251,7 +246,13 @@ impl ProxyRequest
             })?;
 
             let (response_head, response_body) = response.into_parts();
-            log::info!("{} headers: {:?}", uuid, response_head.headers);
+            ui.send(UiEvent::NewResponse(NewResponseEvent {
+                uuid: uuid,
+                connection_uuid,
+                timestamp: Local::now(),
+                headers: response_head.headers.clone(),
+            }))
+            .unwrap();
 
             let response = Response::from_parts(response_head, ());
 
@@ -267,49 +268,51 @@ impl ProxyRequest
                     response_body,
                     &mut client_stream,
                     ui,
-                    |ui, bytes| {
-                        ui.send(UiEvent::ResponseData(ResponseDataEvent {
-                            uuid: uuid,
-                            data: bytes.clone(),
-                        }))
-                        .unwrap();
-                    },
+                    uuid,
+                    RequestPart::Response,
                     true,
                 )
                 .await?;
                 log::info!("{}: Server stream ended", uuid);
 
-                if let Some(trailers) = trailers {
+                if let Some(trailers) = trailers.clone() {
                     client_stream.send_trailers(trailers).context(ServerError {
                         scenario: "sending trailers",
                     })?;
-                    log::info!("{}: Server trailers sent", uuid);
                 }
-            }
 
-            Ok(())
-        };
+                Ok(trailers)
+            } else {
+                Ok(None)
+            }
+        }
+        .then({
+            let ui = ui.clone();
+            move |r| notify_message_done(ui, uuid, r, RequestPart::Response)
+        });
 
         // Now handle both futures in parallel.
         let (r1, r2) = join!(request_future, response_future);
         let r = r1.and(r2);
-        ui.send(UiEvent::RequestStatus(RequestStatusEvent {
+        ui.send(UiEvent::RequestDone(RequestDoneEvent {
             uuid: self.uuid,
             status: match r.is_ok() {
                 true => crate::ui_state::Status::Succeeded,
                 false => crate::ui_state::Status::Failed,
             },
+            timestamp: Local::now(),
         }))
         .unwrap();
         r
     }
 }
 
-async fn pipe_stream<F: Fn(Sender<UiEvent>, &bytes::Bytes)>(
+async fn pipe_stream(
     mut source: RecvStream,
     target: &mut SendStream<Bytes>,
     ui: Sender<UiEvent>,
-    f: F,
+    uuid: Uuid,
+    part: RequestPart,
     server: bool,
 ) -> Result<Option<HeaderMap>>
 {
@@ -317,7 +320,15 @@ async fn pipe_stream<F: Fn(Sender<UiEvent>, &bytes::Bytes)>(
         let b = data.context(ClientError {
             scenario: "reading content",
         })?;
-        f(ui.clone(), &b);
+
+        // Send a notification to the UI.
+        ui.send(UiEvent::MessageData(MessageDataEvent {
+            uuid: uuid,
+            data: b.clone(),
+            part,
+        }))
+        .unwrap();
+
         let size = b.len();
         target
             .send_data(b, source.is_end_stream())
@@ -332,4 +343,36 @@ async fn pipe_stream<F: Fn(Sender<UiEvent>, &bytes::Bytes)>(
     })?;
     log::info!("{:?}", t);
     Ok(t)
+}
+
+async fn notify_message_done(
+    ui: Sender<UiEvent>,
+    uuid: Uuid,
+    r: Result<Option<HeaderMap>>,
+    part: RequestPart,
+) -> Result<()>
+{
+    match r {
+        Ok(trailers) => ui
+            .send(UiEvent::MessageDone(MessageDoneEvent {
+                uuid: uuid,
+                part,
+                status: Status::Succeeded,
+                timestamp: Local::now(),
+                trailers: trailers,
+            }))
+            .unwrap(),
+        Err(e) => {
+            ui.send(UiEvent::MessageDone(MessageDoneEvent {
+                uuid: uuid,
+                part,
+                status: Status::Succeeded,
+                timestamp: Local::now(),
+                trailers: None,
+            }))
+            .unwrap();
+            return Err(e);
+        }
+    }
+    Ok(())
 }

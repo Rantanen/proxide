@@ -1,14 +1,16 @@
-use chrono::prelude::*;
+use bytes::BytesMut;
+use chrono::{prelude::*, Duration};
 use crossterm::event::{Event as CTEvent, KeyCode};
 use http::{HeaderMap, Method, Uri};
 use std::collections::{HashMap, LinkedList};
 use std::net::SocketAddr;
 use std::rc::Rc;
 use tui::backend::Backend;
+use tui::buffer::Buffer;
 use tui::layout::{Constraint, Direction, Layout, Rect};
-use tui::style::{Color, Modifier, Style};
+use tui::style::{Modifier, Style};
 use tui::terminal::Frame;
-use tui::widgets::{Block, Borders, Paragraph, Row, Table, TableState, Text};
+use tui::widgets::{Block, Borders, Paragraph, Row, Table, TableState, Text, Widget};
 use uuid::Uuid;
 
 use crate::decoders::{Decoder, GrpcDecoder, RawDecoder};
@@ -20,15 +22,15 @@ pub enum UiEvent
     Crossterm(crossterm::event::Event),
     NewConnection(NewConnectionEvent),
     NewRequest(NewRequestEvent),
+    NewResponse(NewResponseEvent),
     ConnectionClosed
     {
         uuid: Uuid,
         status: Status,
     },
-    RequestStatus(RequestStatusEvent),
-    RequestData(RequestDataEvent),
-    ResponseData(ResponseDataEvent),
-    LogMessage(String),
+    MessageData(MessageDataEvent),
+    MessageDone(MessageDoneEvent),
+    RequestDone(RequestDoneEvent),
 }
 
 #[derive(Debug)]
@@ -36,6 +38,7 @@ pub struct NewConnectionEvent
 {
     pub uuid: Uuid,
     pub client_addr: SocketAddr,
+    pub timestamp: DateTime<Local>,
 }
 
 #[derive(Debug)]
@@ -46,177 +49,91 @@ pub struct NewRequestEvent
     pub uri: Uri,
     pub method: Method,
     pub headers: HeaderMap,
+    pub timestamp: DateTime<Local>,
 }
 
 #[derive(Debug)]
-pub struct RequestStatusEvent
+pub struct NewResponseEvent
+{
+    pub connection_uuid: Uuid,
+    pub uuid: Uuid,
+    pub headers: HeaderMap,
+    pub timestamp: DateTime<Local>,
+}
+
+#[derive(Debug)]
+pub struct MessageDataEvent
+{
+    pub uuid: Uuid,
+    pub data: bytes::Bytes,
+    pub part: RequestPart,
+}
+
+#[derive(Debug)]
+pub struct MessageDoneEvent
+{
+    pub uuid: Uuid,
+    pub part: RequestPart,
+    pub status: Status,
+    pub timestamp: DateTime<Local>,
+    pub trailers: Option<HeaderMap>,
+}
+
+#[derive(Debug)]
+pub struct RequestDoneEvent
 {
     pub uuid: Uuid,
     pub status: Status,
+    pub timestamp: DateTime<Local>,
 }
 
-#[derive(Debug)]
-pub struct RequestDataEvent
+pub struct ProxideUi<B>
 {
-    pub uuid: Uuid,
-    pub data: bytes::Bytes,
-}
-
-#[derive(Debug)]
-pub struct ResponseDataEvent
-{
-    pub uuid: Uuid,
-    pub data: bytes::Bytes,
+    pub state: State,
+    pub ui_stack: Vec<Box<dyn View<B>>>,
+    pub size: Rect,
 }
 
 pub struct State
 {
     pub connections: ProxideTable<ConnectionData>,
-    pub requests: ProxideTable<RequestData>,
+    pub requests: ProxideTable<EncodedRequest>,
     pub active_window: Window,
     pub protobuf: Rc<Protobuf>,
-    pub debug: DebugLog,
 }
 
+#[derive(PartialEq)]
 pub enum Window
 {
     Connections,
     Requests,
+    Details,
 }
 
-pub enum HandleResult
+pub enum HandleResult<B: Backend>
 {
     Ignore,
     Update,
     Quit,
+    PushView(Box<dyn View<B>>),
 }
 
-impl State
+pub trait View<B: Backend>
 {
-    pub fn new(pb: Protobuf) -> State
-    {
-        State {
-            connections: ProxideTable::new(),
-            requests: ProxideTable::new(),
-            active_window: Window::Requests,
-            protobuf: Rc::new(pb),
-            debug: DebugLog {
-                msgs: LinkedList::new(),
-            },
-        }
-    }
+    fn draw(&mut self, state: &mut State, f: &mut Frame<B>, chunk: Rect);
+    fn on_input(&mut self, state: &mut State, e: CTEvent, size: Rect) -> HandleResult<B>;
+    fn help_text(&self, state: &State, size: Rect) -> String;
+}
 
-    pub fn handle(&mut self, e: UiEvent) -> HandleResult
-    {
-        match e {
-            UiEvent::NewConnection(e) => self.on_new_connection(e),
-            UiEvent::NewRequest(e) => self.on_new_request(e),
-            UiEvent::RequestStatus(e) => self.on_request_status(e),
-            UiEvent::RequestData(e) => {
-                self.on_request_data(e);
-                return HandleResult::Ignore;
-            }
-            UiEvent::ResponseData(e) => {
-                self.on_response_data(e);
-                return HandleResult::Ignore;
-            }
-            UiEvent::Crossterm(e) => return self.on_input(e),
-            // UiEvent::LogMessage(m) => self.debug.msgs.push_back(m),
-            _ => {}
-        }
+#[derive(Default)]
+struct MainView
+{
+    details_view: DetailsView,
+}
 
-        return HandleResult::Update;
-    }
-
-    fn on_new_connection(&mut self, e: NewConnectionEvent)
-    {
-        let data = ConnectionData {
-            uuid: e.uuid,
-            client_addr: e.client_addr,
-            start_timestamp: Local::now(),
-            end_timestamp: None,
-            status: Status::InProgress,
-        };
-        self.connections.push(e.uuid, data);
-    }
-
-    fn on_new_request(&mut self, e: NewRequestEvent)
-    {
-        let (req, resp) = match e.headers["Content-Type"].to_str().unwrap() {
-            "application/grpc" => GrpcDecoder::decoders(&e.uri, self.protobuf.clone()),
-            _ => RawDecoder::decoders(),
-        };
-
-        self.requests.push(
-            e.uuid,
-            RequestData {
-                uuid: e.uuid,
-                connection_uuid: e.connection_uuid,
-                uri: e.uri,
-                method: e.method,
-                headers: e.headers,
-                status: Status::Pending,
-                start_timestamp: Local::now(),
-                end_timestamp: None,
-                request_size: 0,
-                request_data: req,
-                response_size: 0,
-                response_data: resp,
-            },
-        );
-    }
-
-    fn on_request_status(&mut self, e: RequestStatusEvent)
-    {
-        let request = self.requests.get_mut_by_uuid(e.uuid);
-        if let Some(request) = request {
-            if e.status == Status::Failed || e.status == Status::Succeeded {
-                request.end_timestamp = Some(Local::now());
-            }
-            request.status = e.status;
-        }
-    }
-
-    fn on_request_data(&mut self, e: RequestDataEvent)
-    {
-        let request = self.requests.get_mut_by_uuid(e.uuid);
-        if let Some(request) = request {
-            request.request_size += e.data.len();
-            request.request_data.extend(e.data);
-        }
-    }
-
-    fn on_response_data(&mut self, e: ResponseDataEvent)
-    {
-        let request = self.requests.get_mut_by_uuid(e.uuid);
-        if let Some(request) = request {
-            request.response_size += e.data.len();
-            request.response_data.extend(e.data);
-        }
-    }
-
-    fn on_input(&mut self, e: CTEvent) -> HandleResult
-    {
-        // Handle active window input first.
-        let handled = match self.active_window {
-            Window::Connections => self.connections.on_input(e),
-            Window::Requests => self.requests.on_input(e),
-        };
-
-        if !handled {
-            match e {
-                CTEvent::Key(key) => match key.code {
-                    KeyCode::Char('q') => return HandleResult::Quit,
-                    _ => {}
-                },
-                _ => {}
-            };
-        }
-
-        HandleResult::Update
-    }
-
-    pub fn draw<B: Backend>(&mut self, mut f: Frame<B>)
+impl<B: Backend> View<B> for MainView
+{
+    fn draw(&mut self, state: &mut State, f: &mut Frame<B>, chunk: Rect)
     {
         let chunks = Layout::default()
             .direction(Direction::Horizontal)
@@ -229,13 +146,361 @@ impl State
                 ]
                 .as_ref(),
             )
-            .split(f.size());
+            .split(chunk);
 
-        // self.connections.draw(&mut f, chunks[0]);
-        self.requests.draw(&mut f, chunks[0]);
+        // state.connections.draw(&mut f, chunks[0]);
+        state
+            .requests
+            .draw(f, chunks[0], state.active_window == Window::Requests);
 
-        if let Some(request) = self.requests.selected_mut() {
-            request.draw(&mut f, chunks[1]);
+        self.details_view.draw(state, f, chunks[1]);
+    }
+
+    fn on_input(&mut self, state: &mut State, e: CTEvent, size: Rect) -> HandleResult<B>
+    {
+        // Handle active window input first.
+        let handled = match state.active_window {
+            Window::Connections => state.connections.on_input::<B>(e, size),
+            Window::Requests => state.requests.on_input(e, size),
+            Window::Details => HandleResult::Ignore,
+        };
+
+        if let HandleResult::Ignore = handled {
+            match e {
+                CTEvent::Key(key) => match key.code {
+                    KeyCode::Char('r') => state.active_window = Window::Requests,
+                    KeyCode::Char('d') => state.active_window = Window::Details,
+                    KeyCode::Char('q') => {
+                        return HandleResult::PushView(Box::new(MessageView(true, 0)))
+                    }
+                    KeyCode::Char('s') => {
+                        return HandleResult::PushView(Box::new(MessageView(false, 0)))
+                    }
+                    _ => return HandleResult::Ignore,
+                },
+                _ => return HandleResult::Ignore,
+            };
+        }
+
+        HandleResult::Update
+    }
+
+    fn help_text(&self, state: &State, size: Rect) -> String
+    {
+        "Up/Down, j/k: Move up/down".to_string()
+    }
+}
+
+#[derive(Clone, Default)]
+struct DetailsView;
+impl<B: Backend> View<B> for DetailsView
+{
+    fn draw(&mut self, state: &mut State, f: &mut Frame<B>, chunk: Rect)
+    {
+        let request = match state.requests.selected_mut() {
+            Some(r) => r,
+            None => return,
+        };
+
+        let block = create_block("[D]etails", state.active_window == Window::Details);
+        f.render_widget(block, chunk);
+
+        let details_chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .margin(0)
+            .constraints([Constraint::Length(6), Constraint::Percentage(50)].as_ref())
+            .split(block.inner(chunk));
+        let mut c = details_chunks[1];
+        c.x -= 1;
+        c.width += 2;
+        c.height += 1;
+        let req_resp_chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .margin(0)
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
+            .split(block.inner(c));
+
+        let duration = match request.request_data.end_timestamp {
+            None => "(Pending)".to_string(),
+            Some(end) => format_duration(end - request.request_data.start_timestamp),
+        };
+
+        let text = vec![
+            Text::raw("\n"),
+            Text::raw(format!(" Method:     {}\n", request.request_data.method)),
+            Text::raw(format!(" URI:        {}\n", request.request_data.uri)),
+            Text::raw(format!(
+                " Timestamp:  {}\n",
+                request.request_data.start_timestamp.to_string()
+            )),
+            Text::raw(format!(
+                " Status:     {}\n",
+                request.request_data.status.to_string()
+            )),
+            Text::raw(format!(" Duration:   {}\n", duration)),
+        ];
+        let details = Paragraph::new(text.iter());
+        f.render_widget(details, details_chunks[0]);
+
+        request.request_msg.draw(
+            &state.protobuf,
+            &request.request_data,
+            "Re[q]uest Data",
+            f,
+            req_resp_chunks[0],
+            false,
+            0,
+        );
+        request.response_msg.draw(
+            &state.protobuf,
+            &request.request_data,
+            "Re[s]ponse Data",
+            f,
+            req_resp_chunks[1],
+            false,
+            0,
+        );
+    }
+
+    fn on_input(&mut self, state: &mut State, e: CTEvent, size: Rect) -> HandleResult<B>
+    {
+        HandleResult::Ignore
+    }
+
+    fn help_text(&self, state: &State, size: Rect) -> String
+    {
+        String::new()
+    }
+}
+
+struct MessageView(bool, u16);
+impl<B: Backend> View<B> for MessageView
+{
+    fn draw(&mut self, state: &mut State, f: &mut Frame<B>, chunk: Rect)
+    {
+        let request = match state.requests.selected_mut() {
+            Some(r) => r,
+            None => return,
+        };
+
+        let (title, data) = match self.0 {
+            true => ("Request Data", &mut request.request_msg),
+            false => ("Response Data", &mut request.response_msg),
+        };
+        let title = format!("{} (offset {})", title, self.1);
+        data.draw(
+            &state.protobuf,
+            &request.request_data,
+            &title,
+            f,
+            chunk,
+            true,
+            self.1,
+        );
+    }
+
+    fn on_input(&mut self, _state: &mut State, e: CTEvent, size: Rect) -> HandleResult<B>
+    {
+        match e {
+            CTEvent::Key(key) => match key.code {
+                KeyCode::Char('k') | KeyCode::Up => self.1 = self.1.saturating_sub(1),
+                KeyCode::Char('j') | KeyCode::Down => self.1 = self.1.saturating_add(1),
+                KeyCode::PageDown => self.1 = self.1.saturating_add(size.height - 5),
+                KeyCode::PageUp => self.1 = self.1.saturating_sub(size.height - 5),
+                KeyCode::Tab => self.0 = !self.0,
+                _ => return HandleResult::Ignore,
+            },
+            _ => return HandleResult::Ignore,
+        };
+        HandleResult::Update
+    }
+
+    fn help_text(&self, state: &State, size: Rect) -> String
+    {
+        "Up/Down, j/k, PgUp/PgDn: Scroll; Tab: Switch Request/Response".to_string()
+    }
+}
+
+impl<B: Backend> ProxideUi<B>
+{
+    pub fn new(pb: Protobuf, size: Rect) -> Self
+    {
+        Self {
+            state: State {
+                connections: ProxideTable::new(),
+                requests: ProxideTable::new(),
+                active_window: Window::Requests,
+                protobuf: Rc::new(pb),
+            },
+            ui_stack: vec![Box::new(MainView::default())],
+            size,
+        }
+    }
+
+    pub fn handle(&mut self, e: UiEvent) -> HandleResult<B>
+    {
+        match e {
+            UiEvent::NewConnection(e) => self.state.on_new_connection(e),
+            UiEvent::NewRequest(e) => self.state.on_new_request(e),
+            UiEvent::NewResponse(e) => self.state.on_new_response(e),
+            // UiEvent::RequestStatus(e) => self.state.on_request_status(e),
+            UiEvent::MessageData(e) => {
+                self.state.on_message_data(e);
+                return HandleResult::Ignore;
+            }
+            UiEvent::MessageDone(e) => self.state.on_message_done(e),
+            UiEvent::RequestDone(e) => self.state.on_request_done(e),
+            UiEvent::ConnectionClosed { .. } => {}
+            UiEvent::Crossterm(e) => return self.on_input(e, self.size),
+            // UiEvent::LogMessage(m) => self.debug.msgs.push_back(m),
+        }
+
+        return HandleResult::Update;
+    }
+
+    fn on_input(&mut self, e: CTEvent, size: Rect) -> HandleResult<B>
+    {
+        match self
+            .ui_stack
+            .last_mut()
+            .unwrap()
+            .on_input(&mut self.state, e, size)
+        {
+            r @ HandleResult::Update | r @ HandleResult::Quit => return r,
+            HandleResult::Ignore => {}
+            HandleResult::PushView(v) => {
+                self.ui_stack.push(v);
+                return HandleResult::Update;
+            }
+        }
+
+        match e {
+            CTEvent::Resize(width, height) => {
+                self.size = Rect {
+                    x: 0,
+                    y: 0,
+                    width,
+                    height,
+                };
+                HandleResult::Update
+            }
+            CTEvent::Key(key) => match key.code {
+                KeyCode::Char('Q') => return HandleResult::Quit,
+                KeyCode::Esc => {
+                    if self.ui_stack.len() > 1 {
+                        self.ui_stack.pop();
+                    }
+                    HandleResult::Update
+                }
+                _ => HandleResult::Ignore,
+            },
+            _ => HandleResult::Ignore,
+        }
+    }
+
+    pub fn draw(&mut self, mut f: Frame<B>)
+    {
+        let chunk = f.size();
+
+        let view_chunk = Rect {
+            x: 0,
+            y: 0,
+            width: chunk.width,
+            height: chunk.height - 2,
+        };
+        let view = self.ui_stack.last_mut().unwrap();
+        view.draw(&mut self.state, &mut f, view_chunk);
+
+        let help_chunk = Rect {
+            x: 1,
+            y: chunk.height - 2,
+            width: chunk.width - 2,
+            height: 1,
+        };
+        let help_text = view.help_text(&self.state, self.size);
+        let help_line = TextLine(&help_text);
+        f.render_widget(help_line, help_chunk);
+    }
+}
+
+impl State
+{
+    fn on_new_connection(&mut self, e: NewConnectionEvent)
+    {
+        let data = ConnectionData {
+            uuid: e.uuid,
+            client_addr: e.client_addr,
+            start_timestamp: e.timestamp,
+            end_timestamp: None,
+            status: Status::InProgress,
+        };
+        self.connections.push(e.uuid, data);
+    }
+
+    fn on_new_request(&mut self, e: NewRequestEvent)
+    {
+        self.requests.push(
+            e.uuid,
+            EncodedRequest {
+                request_data: RequestData {
+                    uuid: e.uuid,
+                    connection_uuid: e.connection_uuid,
+                    uri: e.uri,
+                    method: e.method,
+                    status: Status::InProgress,
+                    start_timestamp: e.timestamp,
+                    end_timestamp: None,
+                },
+                request_msg: EncodedMessage::new(RequestPart::Request)
+                    .with_headers(e.headers)
+                    .with_start_timestamp(e.timestamp),
+                response_msg: EncodedMessage::new(RequestPart::Response),
+            },
+        );
+    }
+
+    fn on_new_response(&mut self, e: NewResponseEvent)
+    {
+        let request = self.requests.get_mut_by_uuid(e.uuid);
+        if let Some(request) = request {
+            request.response_msg.data.headers = e.headers;
+            request.response_msg.data.start_timestamp = Some(e.timestamp);
+            request.response_msg.ui_state = None;
+        }
+    }
+
+    fn on_message_data(&mut self, e: MessageDataEvent)
+    {
+        let request = self.requests.get_mut_by_uuid(e.uuid);
+        if let Some(request) = request {
+            let part_msg = match e.part {
+                RequestPart::Request => &mut request.request_msg,
+                RequestPart::Response => &mut request.response_msg,
+            };
+            part_msg.data.content.extend(e.data);
+            part_msg.ui_state = None;
+        }
+    }
+
+    fn on_message_done(&mut self, e: MessageDoneEvent)
+    {
+        let request = self.requests.get_mut_by_uuid(e.uuid);
+        if let Some(request) = request {
+            let part_msg = match e.part {
+                RequestPart::Request => &mut request.request_msg,
+                RequestPart::Response => &mut request.response_msg,
+            };
+            part_msg.data.end_timestamp = Some(e.timestamp);
+            part_msg.ui_state = None;
+        }
+    }
+
+    fn on_request_done(&mut self, e: RequestDoneEvent)
+    {
+        let request = self.requests.get_mut_by_uuid(e.uuid);
+        if let Some(request) = request {
+            request.request_data.end_timestamp = Some(e.timestamp);
+            request.request_data.status = e.status;
         }
     }
 }
@@ -276,7 +541,7 @@ impl<T> ProxideTable<T>
         self.items.get_mut(*idx)
     }
 
-    fn on_input(&mut self, e: CTEvent) -> bool
+    fn on_input<B: Backend>(&mut self, e: CTEvent, size: Rect) -> HandleResult<B>
     {
         match e {
             CTEvent::Key(key) => match key.code {
@@ -291,11 +556,11 @@ impl<T> ProxideTable<T>
                         .map(|i| i + 1),
                 ),
                 KeyCode::Esc => self.user_select(None),
-                _ => return false,
+                _ => return HandleResult::Ignore,
             },
-            _ => return false,
+            _ => return HandleResult::Ignore,
         };
-        true
+        HandleResult::Update
     }
 
     fn user_select(&mut self, idx: Option<usize>)
@@ -331,11 +596,9 @@ impl<T> ProxideTable<T>
 
 impl ProxideTable<ConnectionData>
 {
-    pub fn draw<B: Backend>(&mut self, f: &mut Frame<B>, chunk: Rect)
+    pub fn draw<B: Backend>(&mut self, f: &mut Frame<B>, chunk: Rect, is_active: bool)
     {
-        let block = Block::default()
-            .title("[C]onnections")
-            .borders(Borders::ALL);
+        let block = create_block("[C]onnections", is_active);
         let table = Table::new(
             ["Source", "Timestamp", "Status"].iter(),
             self.items.iter().map(|item| {
@@ -362,23 +625,29 @@ impl ProxideTable<ConnectionData>
     }
 }
 
-impl ProxideTable<RequestData>
+impl ProxideTable<EncodedRequest>
 {
-    pub fn draw<B: Backend>(&mut self, f: &mut Frame<B>, chunk: Rect)
+    pub fn draw<B: Backend>(&mut self, f: &mut Frame<B>, chunk: Rect, is_active: bool)
     {
-        let block = Block::default().title("[R]equests").borders(Borders::ALL);
+        let block = create_block("[R]equests", is_active);
         let table = Table::new(
-            ["Method", "Uri", "Timestamp", "Status"].iter(),
+            ["Request", "Timestamp", "St."].iter(),
             self.items.iter().map(|item| {
                 Row::Data(
                     vec![
-                        item.method.to_string(),
-                        match item.uri.path_and_query() {
-                            Some(p) => p.to_string(),
-                            None => "/".to_string(),
-                        },
-                        item.start_timestamp.format("%H:%M:%S").to_string(),
-                        item.status.to_string(),
+                        format!(
+                            "{} {}",
+                            item.request_data.method,
+                            match item.request_data.uri.path_and_query() {
+                                Some(p) => p.to_string(),
+                                None => "/".to_string(),
+                            }
+                        ),
+                        item.request_data
+                            .start_timestamp
+                            .format("%H:%M:%S")
+                            .to_string(),
+                        item.request_data.status.to_string(),
                     ]
                     .into_iter(),
                 )
@@ -386,10 +655,9 @@ impl ProxideTable<RequestData>
         )
         .block(block)
         .widths(&[
-            Constraint::Length(10),
             Constraint::Percentage(100),
             Constraint::Length(10),
-            Constraint::Length(15),
+            Constraint::Length(5),
         ])
         .highlight_symbol("> ")
         .highlight_style(Style::default().modifier(Modifier::BOLD));
@@ -398,112 +666,145 @@ impl ProxideTable<RequestData>
     }
 }
 
-impl RequestData
-{
-    pub fn draw<B: Backend>(&mut self, f: &mut Frame<B>, chunk: Rect)
-    {
-        let block = Block::default()
-            .title("Request [D]etails")
-            .borders(Borders::ALL);
-        f.render_widget(block, chunk);
-
-        let details_chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .margin(0)
-            .constraints([Constraint::Length(6), Constraint::Percentage(50)].as_ref())
-            .split(block.inner(chunk));
-        let mut c = details_chunks[1];
-        c.x -= 1;
-        c.width += 2;
-        c.height += 1;
-        let req_resp_chunks = Layout::default()
-            .direction(Direction::Horizontal)
-            .margin(0)
-            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
-            .split(block.inner(c));
-
-        let duration = match self.end_timestamp {
-            None => "(Pending)".to_string(),
-            Some(s) => (s - self.start_timestamp).to_string(),
-        };
-
-        let text = vec![
-            Text::raw("\n"),
-            Text::raw(format!(" Method:     {}\n", self.method)),
-            Text::raw(format!(" URI:        {}\n", self.uri)),
-            Text::raw(format!(
-                " Timestamp:  {}\n",
-                self.start_timestamp.to_string()
-            )),
-            Text::raw(format!(" Status:     {}\n", self.status.to_string())),
-            Text::raw(format!(" Duration:   {}\n", duration)),
-        ];
-        let details = Paragraph::new(text.iter());
-        f.render_widget(details, details_chunks[0]);
-
-        let text = self.request_data.as_text();
-        let request_title = format!("Request Data ({} bytes)", self.request_size);
-        let request_data = Paragraph::new(text.iter())
-            .block(Block::default().title(&request_title).borders(Borders::ALL))
-            .wrap(false);
-        f.render_widget(request_data, req_resp_chunks[0]);
-
-        let text = self.response_data.as_text();
-        let response_title = format!("Response Data ({} bytes)", self.response_size);
-        let response_data = Paragraph::new(text.iter())
-            .block(
-                Block::default()
-                    .title(&response_title)
-                    .borders(Borders::ALL),
-            )
-            .wrap(false);
-        f.render_widget(response_data, req_resp_chunks[1]);
-    }
-}
-
 pub struct ConnectionData
 {
-    uuid: Uuid,
-    client_addr: SocketAddr,
-    start_timestamp: DateTime<Local>,
-    end_timestamp: Option<DateTime<Local>>,
-    status: Status,
+    pub uuid: Uuid,
+    pub client_addr: SocketAddr,
+    pub start_timestamp: DateTime<Local>,
+    pub end_timestamp: Option<DateTime<Local>>,
+    pub status: Status,
 }
 
 pub struct RequestData
 {
-    uuid: Uuid,
-    connection_uuid: Uuid,
-    method: Method,
-    uri: Uri,
-    headers: HeaderMap,
-    start_timestamp: DateTime<Local>,
-    end_timestamp: Option<DateTime<Local>>,
-    status: Status,
-    request_size: usize,
-    request_data: Box<dyn Decoder>,
-    response_size: usize,
-    response_data: Box<dyn Decoder>,
+    pub uuid: Uuid,
+    pub connection_uuid: Uuid,
+    pub method: Method,
+    pub uri: Uri,
+    pub start_timestamp: DateTime<Local>,
+    pub end_timestamp: Option<DateTime<Local>>,
+    pub status: Status,
 }
 
-pub struct DebugLog
+pub struct EncodedRequest
 {
-    msgs: LinkedList<String>,
+    request_data: RequestData,
+    request_msg: EncodedMessage,
+    response_msg: EncodedMessage,
 }
 
-impl DebugLog
+impl EncodedRequest
 {
-    pub fn draw<B: Backend>(&mut self, f: &mut Frame<B>, chunk: Rect)
+    fn set_dirty(&mut self)
     {
-        let size = chunk.height - 2;
-        while self.msgs.len() > size as usize {
-            self.msgs.pop_front();
+        self.request_msg.ui_state = None;
+        self.response_msg.ui_state = None;
+    }
+}
+
+pub struct EncodedMessage
+{
+    pub data: MessageData,
+    ui_state: Option<MessageDataUiState>,
+}
+
+impl EncodedMessage
+{
+    fn new(part: RequestPart) -> Self
+    {
+        Self {
+            ui_state: Default::default(),
+            data: MessageData::new(part),
+        }
+    }
+
+    fn with_headers(mut self, h: HeaderMap) -> Self
+    {
+        self.data.headers = h;
+        self
+    }
+
+    fn with_start_timestamp(mut self, ts: DateTime<Local>) -> Self
+    {
+        self.data.start_timestamp = Some(ts);
+        self
+    }
+}
+
+pub struct MessageData
+{
+    pub headers: HeaderMap,
+    pub trailers: HeaderMap,
+    pub content: BytesMut,
+    pub start_timestamp: Option<DateTime<Local>>,
+    pub end_timestamp: Option<DateTime<Local>>,
+    pub part: RequestPart,
+}
+
+impl MessageData
+{
+    fn new(part: RequestPart) -> Self
+    {
+        Self {
+            headers: Default::default(),
+            trailers: Default::default(),
+            content: Default::default(),
+            start_timestamp: None,
+            end_timestamp: None,
+            part,
+        }
+    }
+}
+
+struct MessageDataUiState
+{
+    decoders: Vec<Box<dyn Decoder>>,
+    active_decoder: usize,
+}
+
+impl EncodedMessage
+{
+    fn draw<B: Backend>(
+        &mut self,
+        pb: &Rc<Protobuf>,
+        request: &RequestData,
+        title: &str,
+        f: &mut Frame<B>,
+        chunk: Rect,
+        is_active: bool,
+        offset: u16,
+    )
+    {
+        let duration = match (self.data.start_timestamp, self.data.end_timestamp) {
+            (Some(start), Some(end)) => format!(", {}", format_duration(end - start)),
+            _ => String::new(),
+        };
+
+        let request_title = format!("{} ({} bytes{})", title, self.data.content.len(), duration);
+        let block = create_block(&request_title, is_active);
+
+        if self.ui_state.is_none() {
+            let decoders: Vec<Box<dyn Decoder>> = vec![
+                Some(Box::new(RawDecoder) as Box<dyn Decoder>),
+                GrpcDecoder::try_get_decoder(request, &self.data, pb),
+            ]
+            .into_iter()
+            .filter_map(|i| i)
+            .collect();
+
+            self.ui_state = Some(MessageDataUiState {
+                active_decoder: decoders.len() - 1,
+                decoders,
+            });
         }
 
-        let text: Vec<_> = self.msgs.iter().map(|msg| Text::raw(msg)).collect();
-        let messages = Paragraph::new(text.iter())
-            .block(Block::default().title("Debug Log").borders(Borders::ALL));
-        f.render_widget(messages, chunk);
+        let ui_state = self.ui_state.as_ref().unwrap();
+        let text = ui_state.decoders[ui_state.active_decoder].decode(&self.data);
+        let request_data = Paragraph::new(text.iter())
+            .block(block)
+            .wrap(false)
+            .scroll(offset);
+        f.render_widget(request_data, chunk);
     }
 }
 
@@ -522,15 +823,54 @@ pub enum Status
     Failed,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum RequestPart
+{
+    Request,
+    Response,
+}
+
 impl std::fmt::Display for Status
 {
     fn fmt(&self, w: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error>
     {
         match self {
-            Status::Pending => write!(w, "Pending"),
-            Status::InProgress => write!(w, "In progress"),
-            Status::Succeeded => write!(w, "Succeeded"),
-            Status::Failed => write!(w, "Failed"),
+            Status::Pending => write!(w, "-"),
+            Status::InProgress => write!(w, ".."),
+            Status::Succeeded => write!(w, "OK"),
+            Status::Failed => write!(w, "Fail"),
         }
+    }
+}
+
+fn create_block(title: &str, active: bool) -> Block
+{
+    let mut block = Block::default().title(title).borders(Borders::ALL);
+    if active {
+        block = block.border_type(tui::widgets::BorderType::Thick);
+    }
+    block
+}
+
+struct TextLine<'a>(&'a str);
+impl<'a> Widget for TextLine<'a>
+{
+    fn render(self, area: Rect, buf: &mut Buffer)
+    {
+        buf.set_stringn(
+            area.x,
+            area.y,
+            self.0,
+            area.width as usize,
+            Style::default(),
+        );
+    }
+}
+
+fn format_duration(d: Duration) -> String
+{
+    match d {
+        t if t > Duration::seconds(10) => format!("{} s", t.num_seconds()),
+        t => format!("{} ms", t.num_milliseconds()),
     }
 }

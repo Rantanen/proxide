@@ -30,12 +30,8 @@ impl Protobuf
 {
     fn add_type(&mut self, t: ProtobufType)
     {
-        let name = match &t {
-            ProtobufType::Message(msg) => &msg.name,
-            ProtobufType::Enum(e) => &e.name,
-        };
-        self.types_by_name
-            .insert(name.to_string(), self.types.len());
+        let full_name = t.full_name();
+        self.types_by_name.insert(full_name, self.types.len());
         self.types.push(t);
     }
 
@@ -94,6 +90,22 @@ impl ProtobufType
             ProtobufType::Enum(t) => &t.name,
         }
     }
+
+    pub fn full_name(&self) -> String
+    {
+        // The full name requires path and name from the underlying type.
+        let (path, mut name) = match self {
+            ProtobufType::Message(v) => (&v.path, &v.name),
+            ProtobufType::Enum(v) => (&v.path, &v.name),
+        };
+
+        // If the path is empty the full name is nothing but the name. Otherwise conmbine the path
+        // with the name.
+        match path.is_empty() {
+            true => name.to_string(),
+            false => format!("{}.{}", path, name),
+        }
+    }
 }
 
 #[derive(pest_derive::Parser)]
@@ -134,8 +146,12 @@ pub fn parse(s: &str) -> Result<Protobuf>
                         ValueType::Unknown(s) => s,
                         _ => continue,
                     };
-                    if let Some(ty) = find_type(&pb, &msg, &unk) {
+                    if let Some(ty) = find_type_ref(&pb.types_by_name, Some(&msg), &unk)
+                        .and_then(|tr| find_type(&pb.types, tr))
+                    {
                         type_assignments.push((type_idx, field_idx, ty));
+                    } else {
+                        log::error!("Could not resolve {}", unk);
                     }
                 }
             }
@@ -155,16 +171,16 @@ pub fn parse(s: &str) -> Result<Protobuf>
         for r in &mut s.rpcs {
             match &r.param.param_type {
                 ParamType::Unknown(s) => {
-                    if let Some(&tr) = pb.types_by_name.get(s.as_str()) {
-                        r.param.param_type = ParamType::Message(MessageRef(TypeRef { idx: tr }));
+                    if let Some(tr) = find_type_ref(&pb.types_by_name, None, s.as_str()) {
+                        r.param.param_type = ParamType::Message(MessageRef(tr));
                     }
                 }
                 _ => {}
             }
             match &r.retval.param_type {
                 ParamType::Unknown(s) => {
-                    if let Some(&tr) = pb.types_by_name.get(s.as_str()) {
-                        r.retval.param_type = ParamType::Message(MessageRef(TypeRef { idx: tr }));
+                    if let Some(tr) = find_type_ref(&pb.types_by_name, None, s.as_str()) {
+                        r.retval.param_type = ParamType::Message(MessageRef(tr));
                     }
                 }
                 _ => {}
@@ -175,44 +191,58 @@ pub fn parse(s: &str) -> Result<Protobuf>
     Ok(pb)
 }
 
-fn find_type(pb: &Protobuf, msg: &Message, type_name: &str) -> Option<ValueType>
+fn find_type(types: &Vec<ProtobufType>, tr: TypeRef) -> Option<ValueType>
 {
-    let type_ref = find_type_ref(pb, msg, type_name)?;
-    Some(match pb.types[type_ref.idx] {
-        ProtobufType::Message(..) => ValueType::Message(MessageRef(type_ref)),
-        ProtobufType::Enum(..) => ValueType::Enum(EnumRef(type_ref)),
+    Some(match types[tr.idx] {
+        ProtobufType::Message(..) => ValueType::Message(MessageRef(tr)),
+        ProtobufType::Enum(..) => ValueType::Enum(EnumRef(tr)),
     })
 }
 
-fn find_type_ref(pb: &Protobuf, msg: &Message, type_name: &str) -> Option<TypeRef>
+fn find_type_ref(
+    types_by_name: &HashMap<String, usize>,
+    msg: Option<&Message>,
+    type_name: &str,
+) -> Option<TypeRef>
 {
     // Check for absolute type name.
     if type_name.starts_with(".") {
         let type_name = &type_name[1..];
-        return pb
-            .types_by_name
+        return types_by_name
             .get(type_name)
             .map(|idx| TypeRef { idx: *idx });
     }
 
     // Check if inner items exist that match the path.
-    let mut path: Vec<_> = msg.path.split(".").collect();
-    while !path.is_empty() {
-        let type_path = format!("{}.{}", path.join("."), type_name);
+    let mut path: Vec<_> = match msg {
+        Some(msg) => {
+            let mut parent_path: Vec<_> = if msg.path.is_empty() {
+                vec![]
+            } else {
+                msg.path.split(".").collect()
+            };
+            parent_path.push(&msg.name);
+            parent_path
+        }
+        None => vec![],
+    };
 
-        if let Some(&idx) = pb.types_by_name.get(&type_path) {
+    loop {
+        let type_path = if path.is_empty() {
+            type_name.to_string()
+        } else {
+            format!("{}.{}", path.join("."), type_name)
+        };
+
+        if let Some(&idx) = types_by_name.get(&type_path) {
             return Some(TypeRef { idx });
         }
 
+        if path.is_empty() {
+            return None;
+        }
         path.pop();
     }
-
-    // Check for a global item.
-    if let Some(&idx) = pb.types_by_name.get(type_name) {
-        return Some(TypeRef { idx });
-    }
-
-    None
 }
 
 pub fn parse_top_level_def(p: Pair<Rule>, pb: &mut Protobuf) -> Result<()>
@@ -612,7 +642,7 @@ impl ValueType
         match self {
             Self::Double => 1,
             Self::Float => 5,
-            Self::Int32 => 5,
+            Self::Int32 => 0,
             Self::Int64 => 0,
             Self::UInt32 => 0,
             Self::UInt64 => 0,

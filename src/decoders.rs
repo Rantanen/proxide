@@ -1,47 +1,29 @@
-use crate::proto::{MessageRef, ParamType, Protobuf, ValueType};
 use bytes::{Bytes, BytesMut};
 use http::Uri;
 use std::convert::{TryFrom, TryInto};
 use std::rc::Rc;
 use tui::widgets::Text;
 
+use crate::proto::{MessageRef, ParamType, Protobuf, ValueType};
+use crate::ui_state::{MessageData, RequestData, RequestPart};
+
 pub trait Decoder
 {
-    fn extend(&mut self, b: Bytes);
-    fn as_text(&self) -> Vec<Text>;
+    fn decode(&self, msg: &MessageData) -> Vec<Text>;
 }
 
-pub struct RawDecoder(BytesMut);
-
-impl RawDecoder
-{
-    pub fn decoders() -> (Box<dyn Decoder>, Box<dyn Decoder>)
-    {
-        (
-            Box::new(RawDecoder(Default::default())),
-            Box::new(RawDecoder(Default::default())),
-        )
-    }
-}
+pub struct RawDecoder;
 
 impl Decoder for RawDecoder
 {
-    fn extend(&mut self, b: Bytes)
+    fn decode(&self, msg: &MessageData) -> Vec<Text>
     {
-        self.0.extend(b)
-    }
-
-    fn as_text(&self) -> Vec<Text>
-    {
-        vec![Text::raw(format!("{:?}", self.0))]
+        vec![Text::raw(format!("{:?}", msg.content))]
     }
 }
 
 pub struct GrpcDecoder
 {
-    pub raw: BytesMut,
-    pub values: Vec<ProtobufMessage>,
-    pub cursor: usize,
     pub msg_ref: MessageRef,
     pub pb: Rc<Protobuf>,
 }
@@ -50,78 +32,114 @@ impl GrpcDecoder
 {
     pub fn new(msg_ref: MessageRef, rc: Rc<Protobuf>) -> Self
     {
-        Self {
-            raw: Default::default(),
-            values: vec![],
-            cursor: 0,
-            msg_ref,
-            pb: rc,
-        }
+        Self { msg_ref, pb: rc }
     }
 
-    pub fn decoders(uri: &Uri, rc: Rc<Protobuf>) -> (Box<dyn Decoder>, Box<dyn Decoder>)
+    pub fn try_get_decoder(
+        request: &RequestData,
+        msg: &MessageData,
+        pb: &Rc<Protobuf>,
+    ) -> Option<Box<dyn Decoder>>
     {
-        let mut path = uri.path().rsplit('/');
+        log::info!("Acquiring gRPC decoder: {:?}", msg.headers);
+        match msg.headers.get("content-type")?.to_str() {
+            Ok("application/grpc") => {}
+            _ => return None,
+        }
+
+        let mut path = request.uri.path().rsplit('/');
         let function = path.next().unwrap();
         let service = path.next().unwrap();
-        let service = match rc.get_service(service) {
-            None => return RawDecoder::decoders(),
+        let service = match pb.get_service(service) {
+            None => return None,
             Some(s) => s,
         };
         let function = match service.rpcs.iter().find(|f| f.name == function) {
-            None => return RawDecoder::decoders(),
+            None => return None,
             Some(f) => f,
         };
 
-        let req = match &function.param.param_type {
-            ParamType::Unknown(_) => panic!("Unknown request"),
-            ParamType::Message(msg_ref) => msg_ref,
+        let ty = match msg.part {
+            RequestPart::Request => &function.param.param_type,
+            RequestPart::Response => &function.retval.param_type,
         };
-        let resp = match &function.retval.param_type {
-            ParamType::Unknown(_) => panic!("Unknown response"),
+
+        let ty = match ty {
+            ParamType::Unknown(_) => return None,
             ParamType::Message(msg_ref) => msg_ref,
         };
 
-        (
-            Box::new(GrpcDecoder::new(*req, rc.clone())),
-            Box::new(GrpcDecoder::new(*resp, rc)),
-        )
+        Some(Box::new(GrpcDecoder::new(*ty, pb.clone())))
+    }
+
+    fn get_messages(&self, b: &[u8]) -> Result<Vec<ProtobufMessage>, String>
+    {
+        let mut cursor = 0;
+        let mut values = vec![];
+        while b.len() >= cursor + 5 {
+            let compressed = b[cursor];
+            if compressed != 0 {
+                return Err("Compressed messages are not supported".to_string());
+            }
+
+            let len = ((b[cursor + 1] as usize) << 24)
+                + ((b[cursor + 2] as usize) << 16)
+                + ((b[cursor + 3] as usize) << 8)
+                + b[cursor + 4] as usize;
+
+            if b.len() < cursor + 5 + len {
+                break;
+            }
+            cursor += 5;
+
+            values.push(ProtobufMessage::from(
+                &b[cursor..cursor + len],
+                self.msg_ref,
+                &self.pb,
+            ));
+            cursor += len;
+        }
+
+        Ok(values)
     }
 }
 impl Decoder for GrpcDecoder
 {
-    fn extend(&mut self, b: Bytes)
+    fn decode(&self, msg: &MessageData) -> Vec<Text>
     {
-        self.raw.extend(b);
-
-        if self.raw.len() >= self.cursor + 5 {
-            let compressed = self.raw[self.cursor];
-            if compressed != 0 {
-                panic!("Compressed messages not supported");
-            }
-
-            let len = ((self.raw[self.cursor + 1] as usize) << 24)
-                + ((self.raw[self.cursor + 2] as usize) << 16)
-                + ((self.raw[self.cursor + 3] as usize) << 8)
-                + self.raw[self.cursor + 4] as usize;
-
-            if self.raw.len() < self.cursor + 5 + len {
-                return;
-            }
-
-            let slice = &self.raw[self.cursor + 5..self.cursor + 5 + len];
-            self.values
-                .push(ProtobufMessage::from(slice, self.msg_ref, &self.pb));
+        if msg.content.len() == 0 {
+            return HeaderDecoder.decode(msg);
         }
-    }
 
-    fn as_text(&self) -> Vec<Text>
-    {
-        let type_name = &self.pb.resolve_message(self.msg_ref).name;
         let mut output = vec![];
-        for v in &self.values {
+        for v in &self.get_messages(&msg.content).unwrap() {
             v.describe(0, &mut output, self.pb.as_ref());
         }
+        output
+    }
+}
+
+struct HeaderDecoder;
+impl Decoder for HeaderDecoder
+{
+    fn decode(&self, msg: &MessageData) -> Vec<Text>
+    {
+        let mut output = vec![];
+
+        if msg.headers.len() > 0 {
+            output.push(Text::raw("Headers"));
+            for (k, v) in &msg.headers {
+                output.push(Text::raw(format!(" - {}: {:?}\n", k, v)));
+            }
+        }
+
+        if msg.trailers.len() > 0 {
+            output.push(Text::raw("\nTrailers"));
+            for (k, v) in &msg.headers {
+                output.push(Text::raw(format!(" - {}: {:?}\n", k, v)));
+            }
+        }
+
         output
     }
 }
@@ -162,8 +180,17 @@ impl ProtobufValue
         pb: &Protobuf,
     ) -> Result<ProtobufValue, ProtobufValue>
     {
-        Self::parse_maybe(data, vt, pb)
-            .ok_or_else(|| ProtobufValue::Invalid(vt.clone(), Bytes::copy_from_slice(data)))
+        let original = *data;
+        match Self::parse_maybe(data, vt, pb) {
+            Some(o) => Ok(o),
+            None => {
+                *data = &[];
+                Err(ProtobufValue::Invalid(
+                    vt.clone(),
+                    Bytes::copy_from_slice(original),
+                ))
+            }
+        }
     }
 
     fn parse_maybe(data: &mut &[u8], vt: &ValueType, pb: &Protobuf) -> Option<ProtobufValue>
@@ -259,10 +286,10 @@ impl ProtobufValue
             Self::Invalid(vt, v) => Text::raw(format!("!! {:?} -> {:?}", vt, v)),
             Self::Enum(v) => Text::raw(format!("{}", v)),
 
-            Self::UnknownVarint(v) => Text::raw(format!("! {}", v)),
-            Self::Unknown64(v) => Text::raw(format!("! {}", v)),
-            Self::UnknownLengthDelimited(v) => Text::raw(format!("! {:?}", v)),
-            Self::Unknown32(v) => Text::raw(format!("! {}", v)),
+            Self::UnknownVarint(v) => Text::raw(format!("[Varint] {}", v)),
+            Self::Unknown64(v) => Text::raw(format!("[64bit] {}", v)),
+            Self::UnknownLengthDelimited(v) => Text::raw(format!("[Sized] {:?}", v)),
+            Self::Unknown32(v) => Text::raw(format!("[32bit] {}", v)),
 
             Self::Message(v) => {
                 return v.describe(indent, output, pb);
@@ -356,10 +383,10 @@ impl ProtobufMessage
             let field_type = (tag & 0x07) as u8;
 
             let value = match msg_desc.get_field(field_id) {
-                Some(field) => {
+                Some(field) if field.field_type.tag() == field_type => {
                     ProtobufValue::parse(&mut data, &field.field_type, pb).unwrap_or_else(|e| e)
                 }
-                None => match ProtobufValue::parse_unknown(&mut data, field_type) {
+                _ => match ProtobufValue::parse_unknown(&mut data, field_type) {
                     Some(v) => v,
                     None => {
                         let invalid = ProtobufValue::Invalid(

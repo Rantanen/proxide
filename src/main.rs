@@ -34,15 +34,17 @@ async fn handle_socket(
 #[tokio::main(core_threads = 4)]
 pub async fn main() -> Result<(), Box<dyn Error>>
 {
-    // env_logger::init();
+    simplelog::WriteLogger::init(
+        simplelog::LevelFilter::Trace,
+        simplelog::ConfigBuilder::new()
+            .add_filter_allow("proxide".to_string())
+            .build(),
+        std::fs::File::create("trace.log").unwrap(),
+    )
+    .unwrap();
 
     let (abort_tx, mut abort_rx) = oneshot::channel::<()>();
     let (ui_tx, ui_rx) = std::sync::mpsc::channel();
-
-    let logger = Logger(std::sync::Mutex::new(ui_tx.clone()));
-    log::set_boxed_logger(Box::new(logger))
-        .map(|()| log::set_max_level(log::LevelFilter::Debug))
-        .unwrap();
 
     let proto = {
         let mut proto_file = String::new();
@@ -84,34 +86,4 @@ fn new_connection(
             }
         });
     }
-}
-
-struct Logger(std::sync::Mutex<Sender<ui_state::UiEvent>>);
-impl log::Log for Logger
-{
-    fn enabled(&self, metadata: &log::Metadata) -> bool
-    {
-        true
-    }
-
-    fn log(&self, record: &log::Record)
-    {
-        if !record.target().starts_with("proxide") {
-            return;
-        }
-
-        self.0
-            .lock()
-            .expect("Mutex poisoned")
-            .send(ui_state::UiEvent::LogMessage(format!(
-                "{}:{} {}: {}\n",
-                record.file().unwrap_or_else(|| "<Unknown>"),
-                record.line().unwrap_or_else(|| 0),
-                record.metadata().level(),
-                record.args()
-            )))
-            .unwrap();
-    }
-
-    fn flush(&self) {}
 }

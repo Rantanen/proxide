@@ -12,7 +12,7 @@ use tokio::sync::oneshot;
 use tui::{backend::CrosstermBackend, Terminal};
 
 use crate::proto::Protobuf;
-use crate::ui_state::{HandleResult, State, UiEvent};
+use crate::ui_state::{HandleResult, ProxideUi, UiEvent};
 
 #[derive(Debug, Snafu)]
 #[snafu(visibility(pub(crate)))]
@@ -40,14 +40,15 @@ pub fn main(
     proto: Protobuf,
 ) -> Result<()>
 {
-    let mut state = State::new(proto);
-
     enable_raw_mode().context(TermError {})?;
     execute!(stdout(), EnterAlternateScreen).context(TermError {})?;
 
     let backend = CrosstermBackend::new(stdout());
     let mut terminal = Terminal::new(backend).context(IoError {})?;
     terminal.hide_cursor().context(IoError {})?;
+
+    let mut state = ProxideUi::new(proto, terminal.size().unwrap());
+
     terminal.draw(|f| state.draw(f)).unwrap();
 
     let crossterm_tx = ui_tx.clone();
@@ -59,6 +60,7 @@ pub fn main(
     loop {
         let e = ui_rx.recv().unwrap();
         match state.handle(e) {
+            HandleResult::PushView(..) => unreachable!("PushView is handled by the state"),
             HandleResult::Ignore => {}
             HandleResult::Update => terminal.draw(|f| state.draw(f)).unwrap(),
             HandleResult::Quit => break,

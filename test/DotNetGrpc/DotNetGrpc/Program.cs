@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using Google.Protobuf;
 using Grpc.Core;
 
 namespace DotNetGrpc
@@ -47,7 +48,8 @@ namespace DotNetGrpc
             // var multiHelloStream = client.SayMultipleHello();
             for( int i = 0; i < 50; i++ )
             {
-                var response = await client.SayHelloAsync( new HelloRequest {Name = $"World{i}!"} );
+                var response = await client.SayHelloAsync( new HelloRequest
+                    {Name = $"World{i}!", Data = ByteString.CopyFromUtf8( new string('x', 1000 )), B = true });
                 Console.WriteLine( $"Received '{response.Message}'" );
                 // await Task.Delay( 500 );
                 // await multiHelloStream.RequestStream.WriteAsync( new HelloRequest
@@ -65,20 +67,8 @@ namespace DotNetGrpc
         {
             return new HelloResponse
             {
-                Message = "Hello " + request.Name
+                Message = $"Hello {request.Name} {request.B}",
             };
-        }
-
-        public override async Task SayMultipleHello( IAsyncStreamReader< HelloRequest > requestStream, IServerStreamWriter< HelloResponse > responseStream,
-            ServerCallContext context )
-        {
-            while( await requestStream.MoveNext())
-            {
-                await responseStream.WriteAsync( new HelloResponse
-                {
-                    Message = "Hellooooo " + requestStream.Current.Name
-                } );
-            }
         }
     }
 }
