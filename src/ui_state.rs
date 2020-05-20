@@ -2,7 +2,7 @@ use bytes::BytesMut;
 use chrono::{prelude::*, Duration};
 use crossterm::event::{Event as CTEvent, KeyCode};
 use http::{HeaderMap, Method, Uri};
-use std::collections::{HashMap, LinkedList};
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::rc::Rc;
 use tui::backend::Backend;
@@ -13,7 +13,7 @@ use tui::terminal::Frame;
 use tui::widgets::{Block, Borders, Paragraph, Row, Table, TableState, Text, Widget};
 use uuid::Uuid;
 
-use crate::decoders::{Decoder, GrpcDecoder, RawDecoder};
+use crate::decoders::{Decoder, DecoderFactory, GrpcDecoderFactory, RawDecoderFactory};
 use crate::proto::Protobuf;
 
 #[derive(Debug)]
@@ -100,12 +100,13 @@ pub struct State
     pub requests: ProxideTable<EncodedRequest>,
     pub active_window: Window,
     pub protobuf: Rc<Protobuf>,
+    pub decoder_factories: Vec<Box<dyn DecoderFactory>>,
 }
 
 #[derive(PartialEq)]
 pub enum Window
 {
-    Connections,
+    _Connections,
     Requests,
     Details,
 }
@@ -160,7 +161,7 @@ impl<B: Backend> View<B> for MainView
     {
         // Handle active window input first.
         let handled = match state.active_window {
-            Window::Connections => state.connections.on_input::<B>(e, size),
+            Window::_Connections => state.connections.on_input::<B>(e, size),
             Window::Requests => state.requests.on_input(e, size),
             Window::Details => HandleResult::Ignore,
         };
@@ -185,7 +186,7 @@ impl<B: Backend> View<B> for MainView
         HandleResult::Update
     }
 
-    fn help_text(&self, state: &State, size: Rect) -> String
+    fn help_text(&self, _state: &State, _size: Rect) -> String
     {
         "Up/Down, j/k: Move up/down".to_string()
     }
@@ -243,7 +244,7 @@ impl<B: Backend> View<B> for DetailsView
         f.render_widget(details, details_chunks[0]);
 
         request.request_msg.draw(
-            &state.protobuf,
+            &state.decoder_factories,
             &request.request_data,
             "Re[q]uest Data",
             f,
@@ -252,7 +253,7 @@ impl<B: Backend> View<B> for DetailsView
             0,
         );
         request.response_msg.draw(
-            &state.protobuf,
+            &state.decoder_factories,
             &request.request_data,
             "Re[s]ponse Data",
             f,
@@ -262,12 +263,12 @@ impl<B: Backend> View<B> for DetailsView
         );
     }
 
-    fn on_input(&mut self, state: &mut State, e: CTEvent, size: Rect) -> HandleResult<B>
+    fn on_input(&mut self, _state: &mut State, _e: CTEvent, _size: Rect) -> HandleResult<B>
     {
         HandleResult::Ignore
     }
 
-    fn help_text(&self, state: &State, size: Rect) -> String
+    fn help_text(&self, _state: &State, _size: Rect) -> String
     {
         String::new()
     }
@@ -289,7 +290,7 @@ impl<B: Backend> View<B> for MessageView
         };
         let title = format!("{} (offset {})", title, self.1);
         data.draw(
-            &state.protobuf,
+            &state.decoder_factories,
             &request.request_data,
             &title,
             f,
@@ -315,7 +316,7 @@ impl<B: Backend> View<B> for MessageView
         HandleResult::Update
     }
 
-    fn help_text(&self, state: &State, size: Rect) -> String
+    fn help_text(&self, _state: &State, _size: Rect) -> String
     {
         "Up/Down, j/k, PgUp/PgDn: Scroll; Tab: Switch Request/Response".to_string()
     }
@@ -325,12 +326,17 @@ impl<B: Backend> ProxideUi<B>
 {
     pub fn new(pb: Protobuf, size: Rect) -> Self
     {
+        let pb = Rc::new(pb);
         Self {
             state: State {
                 connections: ProxideTable::new(),
                 requests: ProxideTable::new(),
                 active_window: Window::Requests,
-                protobuf: Rc::new(pb),
+                protobuf: pb.clone(),
+                decoder_factories: vec![
+                    Box::new(RawDecoderFactory),
+                    Box::new(GrpcDecoderFactory { pb }),
+                ],
             },
             ui_stack: vec![Box::new(MainView::default())],
             size,
@@ -538,7 +544,7 @@ impl<T> ProxideTable<T>
         self.items.get_mut(*idx)
     }
 
-    fn on_input<B: Backend>(&mut self, e: CTEvent, size: Rect) -> HandleResult<B>
+    fn on_input<B: Backend>(&mut self, e: CTEvent, _size: Rect) -> HandleResult<B>
     {
         match e {
             CTEvent::Key(key) => match key.code {
@@ -593,7 +599,7 @@ impl<T> ProxideTable<T>
 
 impl ProxideTable<ConnectionData>
 {
-    pub fn draw<B: Backend>(&mut self, f: &mut Frame<B>, chunk: Rect, is_active: bool)
+    pub fn _draw<B: Backend>(&mut self, f: &mut Frame<B>, chunk: Rect, is_active: bool)
     {
         let block = create_block("[C]onnections", is_active);
         let table = Table::new(
@@ -690,15 +696,6 @@ pub struct EncodedRequest
     response_msg: EncodedMessage,
 }
 
-impl EncodedRequest
-{
-    fn set_dirty(&mut self)
-    {
-        self.request_msg.ui_state = None;
-        self.response_msg.ui_state = None;
-    }
-}
-
 pub struct EncodedMessage
 {
     pub data: MessageData,
@@ -763,7 +760,7 @@ impl EncodedMessage
 {
     fn draw<B: Backend>(
         &mut self,
-        pb: &Rc<Protobuf>,
+        decoders: &[Box<dyn DecoderFactory>],
         request: &RequestData,
         title: &str,
         f: &mut Frame<B>,
@@ -781,13 +778,11 @@ impl EncodedMessage
         let block = create_block(&request_title, is_active);
 
         if self.ui_state.is_none() {
-            let decoders: Vec<Box<dyn Decoder>> = vec![
-                Some(Box::new(RawDecoder) as Box<dyn Decoder>),
-                GrpcDecoder::try_get_decoder(request, &self.data, pb),
-            ]
-            .into_iter()
-            .filter_map(|i| i)
-            .collect();
+            let decoders: Vec<Box<dyn Decoder>> = decoders
+                .iter()
+                .map(|d| d.try_create(request, &self.data))
+                .filter_map(|o| o)
+                .collect();
 
             self.ui_state = Some(MessageDataUiState {
                 active_decoder: decoders.len() - 1,
@@ -805,16 +800,9 @@ impl EncodedMessage
     }
 }
 
-pub enum Protocol
-{
-    Unknown,
-    Grpc(String, String),
-}
-
 #[derive(Debug, PartialEq)]
 pub enum Status
 {
-    Pending,
     InProgress,
     Succeeded,
     Failed,
@@ -832,7 +820,6 @@ impl std::fmt::Display for Status
     fn fmt(&self, w: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error>
     {
         match self {
-            Status::Pending => write!(w, "-"),
             Status::InProgress => write!(w, ".."),
             Status::Succeeded => write!(w, "OK"),
             Status::Failed => write!(w, "Fail"),

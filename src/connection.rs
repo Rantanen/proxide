@@ -210,7 +210,6 @@ impl ProxyRequest
                 ui,
                 uuid,
                 RequestPart::Request,
-                false,
             )
             .await?;
 
@@ -270,7 +269,6 @@ impl ProxyRequest
                     ui,
                     uuid,
                     RequestPart::Response,
-                    true,
                 )
                 .await?;
                 log::info!("{}: Server stream ended", uuid);
@@ -313,7 +311,6 @@ async fn pipe_stream(
     ui: Sender<UiEvent>,
     uuid: Uuid,
     part: RequestPart,
-    server: bool,
 ) -> Result<Option<HeaderMap>>
 {
     while let Some(data) = source.data().await {
@@ -335,7 +332,7 @@ async fn pipe_stream(
             .context(ServerError {
                 scenario: "writing content",
             })?;
-        source.flow_control().release_capacity(size);
+        source.flow_control().release_capacity(size).unwrap();
     }
 
     let t = source.trailers().await.context(ClientError {

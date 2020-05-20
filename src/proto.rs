@@ -83,18 +83,10 @@ pub enum ProtobufType
 
 impl ProtobufType
 {
-    pub fn name(&self) -> &str
-    {
-        match self {
-            ProtobufType::Message(t) => &t.name,
-            ProtobufType::Enum(t) => &t.name,
-        }
-    }
-
     pub fn full_name(&self) -> String
     {
         // The full name requires path and name from the underlying type.
-        let (path, mut name) = match self {
+        let (path, name) = match self {
             ProtobufType::Message(v) => (&v.path, &v.name),
             ProtobufType::Enum(v) => (&v.path, &v.name),
         };
@@ -396,10 +388,16 @@ pub fn parse_enum(p: Pair<Rule>, path: &[&str], pb: &mut Protobuf) -> Result<usi
     let name = name.as_str().to_string();
 
     let fields = parse_enum_body(body.into_inner())?;
+    let fields_by_value = fields
+        .iter()
+        .enumerate()
+        .map(|(idx, field)| (field.value, idx))
+        .collect();
     pb.add_type(ProtobufType::Enum(Enum {
         name,
         path: path.iter().copied().collect::<Vec<_>>().join("."),
         fields,
+        fields_by_value,
     }));
     Ok(pb.types.len() - 1)
 }
@@ -424,7 +422,7 @@ pub fn parse_enum_field(p: Pair<Rule>) -> Result<EnumField>
 
     Ok(EnumField {
         name: name.as_str().to_string(),
-        value: value.as_str().to_string(),
+        value: parse_int_literal(value)?,
     })
 }
 
@@ -551,7 +549,7 @@ pub fn parse_int_literal(p: Pair<Rule>) -> Result<i64>
             };
             Ok(match lit.as_rule() {
                 Rule::decimalLit => sign * i64::from_str_radix(lit.as_str(), 10).unwrap(),
-                Rule::octalLit => sign * i64::from_str_radix(&lit.as_str()[1..], 8).unwrap(),
+                Rule::octalLit => sign * i64::from_str_radix(&lit.as_str(), 8).unwrap(),
                 Rule::hexLit => sign * i64::from_str_radix(&lit.as_str()[2..], 16).unwrap(),
                 r => unreachable!("{:?}: {:?}", r, lit),
             })
@@ -560,12 +558,12 @@ pub fn parse_int_literal(p: Pair<Rule>) -> Result<i64>
     }
 }
 
-pub fn parse_options(p: Pair<Rule>) -> Result<Vec<ProtoOption>>
+pub fn parse_options(_p: Pair<Rule>) -> Result<Vec<ProtoOption>>
 {
     Ok(vec![])
 }
 
-pub fn parse_option(p: Pair<Rule>) -> Result<ProtoOption>
+pub fn parse_option(_p: Pair<Rule>) -> Result<ProtoOption>
 {
     Ok(ProtoOption {})
 }
@@ -613,13 +611,24 @@ pub struct Enum
     pub name: String,
     pub path: String,
     pub fields: Vec<EnumField>,
+    pub fields_by_value: HashMap<i64, usize>,
 }
 
 #[derive(Debug)]
 pub struct EnumField
 {
     pub name: String,
-    pub value: String,
+    pub value: i64,
+}
+
+impl Enum
+{
+    pub fn get_field(&self, value: i64) -> Option<&EnumField>
+    {
+        self.fields_by_value
+            .get(&value)
+            .map(|idx| &self.fields[*idx])
+    }
 }
 
 #[derive(Clone, Debug)]
