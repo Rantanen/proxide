@@ -11,6 +11,7 @@ use std::{
 use tokio::sync::oneshot;
 use tui::{backend::CrosstermBackend, Terminal};
 
+use crate::decoders::DecoderFactory;
 use crate::proto::Protobuf;
 use crate::ui_state::{HandleResult, ProxideUi, UiEvent};
 
@@ -37,7 +38,7 @@ pub fn main(
     abort_tx: oneshot::Sender<()>,
     ui_tx: mpsc::Sender<UiEvent>,
     ui_rx: mpsc::Receiver<UiEvent>,
-    proto: Protobuf,
+    decoders: Vec<Box<dyn DecoderFactory>>,
 ) -> Result<()>
 {
     enable_raw_mode().context(TermError {})?;
@@ -47,7 +48,7 @@ pub fn main(
     let mut terminal = Terminal::new(backend).context(IoError {})?;
     terminal.hide_cursor().context(IoError {})?;
 
-    let mut state = ProxideUi::new(proto, terminal.size().unwrap());
+    let mut state = ProxideUi::new(decoders, terminal.size().unwrap());
 
     terminal.draw(|f| state.draw(f)).unwrap();
 

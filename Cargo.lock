@@ -680,6 +680,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "protofish"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "pest",
+ "pest_derive",
+ "snafu",
+]
+
+[[package]]
 name = "proxide"
 version = "0.1.0"
 dependencies = [
@@ -693,6 +703,7 @@ dependencies = [
  "log",
  "pest",
  "pest_derive",
+ "protofish",
  "simplelog",
  "snafu",
  "tokio",

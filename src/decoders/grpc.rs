@@ -1,15 +1,44 @@
 use bytes::Bytes;
+use clap::ArgMatches;
+use snafu::ResultExt;
 use std::convert::{TryFrom, TryInto};
+use std::io::Read;
 use std::rc::Rc;
 use tui::widgets::Text;
 
-use super::{Decoder, DecoderFactory, HeaderDecoder};
-use crate::proto::{EnumRef, MessageRef, ParamType, Protobuf, ValueType};
+use super::{ConfigurationValueError, Decoder, DecoderFactory, Result};
+use crate::proto::{self, EnumRef, MessageRef, ParamType, Protobuf, ValueType};
 use crate::ui_state::{MessageData, RequestData, RequestPart};
 
 pub struct GrpcDecoderFactory
 {
     pub pb: Rc<Protobuf>,
+}
+
+pub fn initialize(matches: &ArgMatches) -> Result<Option<Box<dyn DecoderFactory>>>
+{
+    let proto = match matches.value_of("proto") {
+        Some(file_name) => {
+            let mut proto_file = String::new();
+            std::fs::File::open(file_name)
+                .and_then(|mut file| file.read_to_string(&mut proto_file))
+                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send>)
+                .context(ConfigurationValueError {
+                    option: "proto".to_string(),
+                    msg: format!("Failed to read '{}'", file_name),
+                })?;
+
+            proto::parse(&proto_file)
+                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send>)
+                .context(ConfigurationValueError {
+                    option: "proto".to_string(),
+                    msg: format!("Failed to parse '{}'", file_name),
+                })?
+        }
+        None => proto::empty(),
+    };
+
+    Ok(Some(Box::new(GrpcDecoderFactory { pb: Rc::new(proto) })))
 }
 
 impl DecoderFactory for GrpcDecoderFactory

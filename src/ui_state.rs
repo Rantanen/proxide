@@ -13,7 +13,7 @@ use tui::terminal::Frame;
 use tui::widgets::{Block, Borders, Paragraph, Row, Table, TableState, Text, Widget};
 use uuid::Uuid;
 
-use crate::decoders::{Decoder, DecoderFactory, GrpcDecoderFactory, RawDecoderFactory};
+use crate::decoders::{Decoder, DecoderFactory};
 use crate::proto::Protobuf;
 
 #[derive(Debug)]
@@ -99,7 +99,6 @@ pub struct State
     pub connections: ProxideTable<ConnectionData>,
     pub requests: ProxideTable<EncodedRequest>,
     pub active_window: Window,
-    pub protobuf: Rc<Protobuf>,
     pub decoder_factories: Vec<Box<dyn DecoderFactory>>,
 }
 
@@ -324,19 +323,14 @@ impl<B: Backend> View<B> for MessageView
 
 impl<B: Backend> ProxideUi<B>
 {
-    pub fn new(pb: Protobuf, size: Rect) -> Self
+    pub fn new(decoders: Vec<Box<dyn DecoderFactory>>, size: Rect) -> Self
     {
-        let pb = Rc::new(pb);
         Self {
             state: State {
                 connections: ProxideTable::new(),
                 requests: ProxideTable::new(),
                 active_window: Window::Requests,
-                protobuf: pb.clone(),
-                decoder_factories: vec![
-                    Box::new(RawDecoderFactory),
-                    Box::new(GrpcDecoderFactory { pb }),
-                ],
+                decoder_factories: decoders,
             },
             ui_stack: vec![Box::new(MainView::default())],
             size,

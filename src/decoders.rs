@@ -1,9 +1,24 @@
+use snafu::{ResultExt, Snafu};
 use tui::widgets::Text;
 
 use crate::ui_state::{MessageData, RequestData};
 
-mod grpc;
-pub use grpc::GrpcDecoderFactory;
+pub mod grpc;
+pub mod raw;
+
+#[derive(Debug, Snafu)]
+pub enum Error
+{
+    #[snafu(display("Parameter {}: {}", option, msg))]
+    ConfigurationValueError
+    {
+        option: String,
+        msg: String,
+        source: Box<dyn std::error::Error + Send>,
+    },
+}
+
+type Result<S, E = Error> = std::result::Result<S, E>;
 
 /// A factory for constructing decoders.
 pub trait DecoderFactory
@@ -16,24 +31,6 @@ pub trait DecoderFactory
 pub trait Decoder
 {
     fn decode(&self, msg: &MessageData) -> Vec<Text>;
-}
-
-pub struct RawDecoderFactory;
-impl DecoderFactory for RawDecoderFactory
-{
-    fn try_create(&self, _: &RequestData, _: &MessageData) -> Option<Box<dyn Decoder>>
-    {
-        Some(Box::new(RawDecoder))
-    }
-}
-
-pub struct RawDecoder;
-impl Decoder for RawDecoder
-{
-    fn decode(&self, msg: &MessageData) -> Vec<Text>
-    {
-        vec![Text::raw(format!("{:?}", msg.content))]
-    }
 }
 
 struct HeaderDecoder;

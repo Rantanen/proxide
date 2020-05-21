@@ -1,6 +1,6 @@
 use clap::{App, Arg};
 use log::debug;
-use std::error::Error;
+use snafu::{ResultExt, Snafu};
 use std::io::Read;
 use std::net::SocketAddr;
 use std::sync::mpsc::Sender;
@@ -16,12 +16,30 @@ mod ui_state;
 
 use connection::ProxyConnection;
 
+#[derive(Debug, Snafu)]
+pub enum Error
+{
+    #[snafu(display("{}", source))]
+    UiError
+    {
+        source: ui::Error
+    },
+
+    #[snafu(display("{}", source))]
+    DecoderError
+    {
+        source: decoders::Error
+    },
+}
+
+type Result<S, E = Error> = std::result::Result<S, E>;
+
 async fn handle_socket(
     tx: Sender<ui_state::UiEvent>,
     client_stream: TcpStream,
     src_addr: SocketAddr,
     target_port: &str,
-) -> Result<(), Box<dyn Error>>
+) -> Result<(), Box<dyn std::error::Error>>
 {
     let server_stream = TcpStream::connect(format!("127.0.0.1:{}", target_port)).await?;
 
@@ -34,7 +52,7 @@ async fn handle_socket(
 }
 
 #[tokio::main(core_threads = 4)]
-pub async fn main() -> Result<(), Box<dyn Error>>
+pub async fn main() -> Result<(), Error>
 {
     simplelog::WriteLogger::init(
         simplelog::LevelFilter::Trace,
@@ -76,21 +94,6 @@ pub async fn main() -> Result<(), Box<dyn Error>>
     let (abort_tx, mut abort_rx) = oneshot::channel::<()>();
     let (ui_tx, ui_rx) = std::sync::mpsc::channel();
 
-    let proto = match matches.value_of("proto") {
-        Some(file_name) => {
-            let mut proto_file = String::new();
-            let mut f = std::fs::File::open(file_name)?;
-            f.read_to_string(&mut proto_file)?;
-            proto::parse(&proto_file)?
-        }
-        None => proto::empty(),
-    };
-
-    let _ = std::thread::spawn({
-        let ui_tx = ui_tx.clone();
-        move || ui::main(abort_tx, ui_tx, ui_rx, proto)
-    });
-
     let listen_port = matches.value_of("listen").unwrap();
     let mut listener_ipv4 = TcpListener::bind(format!("0.0.0.0:{}", listen_port))
         .await
@@ -99,11 +102,25 @@ pub async fn main() -> Result<(), Box<dyn Error>>
         .await
         .unwrap();
 
-    let target_port = matches.value_of("target").unwrap();
+    let target_port = matches.value_of("target").unwrap().to_string();
+
+    let h: std::thread::JoinHandle<Result<(), Error>> = std::thread::spawn({
+        let ui_tx = ui_tx.clone();
+        move || {
+            let mut decoders = vec![];
+            decoders.push(decoders::raw::initialize(&matches).context(DecoderError {})?);
+            decoders.push(decoders::grpc::initialize(&matches).context(DecoderError {})?);
+            let decoders = decoders.into_iter().filter_map(|o| o).collect();
+
+            Ok(ui::main(abort_tx, ui_tx, ui_rx, decoders).context(UiError {})?)
+        }
+    });
+
     loop {
         tokio::select! {
             _ = &mut abort_rx => {
-                break Ok(());
+                let r = h.join().unwrap();
+                break r;
             },
             result = listener_ipv4.accept() => new_connection(ui_tx.clone(), result, &target_port),
             result = listener_ipv6.accept() => new_connection(ui_tx.clone(), result, &target_port),
