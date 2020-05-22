@@ -22,4 +22,4 @@ chrono = "*"
 pest = "*"
 pest_derive = "*"
 clap = "*"
-protofish = { version = "*", path = "../protofish" }
+protofish = { version = "*" }

@@ -1,44 +1,59 @@
-use bytes::Bytes;
-use clap::ArgMatches;
+use clap::{App, Arg, ArgMatches};
+use protofish::{context::MessageRef, Context, MessageValue};
 use snafu::ResultExt;
-use std::convert::{TryFrom, TryInto};
 use std::io::Read;
 use std::rc::Rc;
 use tui::widgets::Text;
 
-use super::{ConfigurationValueError, Decoder, DecoderFactory, Result};
-use crate::proto::{self, EnumRef, MessageRef, ParamType, Protobuf, ValueType};
+use super::{ConfigurationError, ConfigurationValueError, Decoder, DecoderFactory, Result};
 use crate::ui_state::{MessageData, RequestData, RequestPart};
 
 pub struct GrpcDecoderFactory
 {
-    pub pb: Rc<Protobuf>,
+    ctx: Rc<protofish::Context>,
+}
+
+pub fn setup_args<'a, 'b>(app: App<'a, 'b>) -> App<'a, 'b>
+{
+    app.arg(
+        Arg::with_name("grpc")
+            .long("grpc")
+            .value_name("PROTO_FILE")
+            .multiple(true)
+            .help("Specify .proto file for decoding Protobuf messages")
+            .takes_value(true),
+    )
 }
 
 pub fn initialize(matches: &ArgMatches) -> Result<Option<Box<dyn DecoderFactory>>>
 {
-    let proto = match matches.value_of("proto") {
-        Some(file_name) => {
-            let mut proto_file = String::new();
-            std::fs::File::open(file_name)
-                .and_then(|mut file| file.read_to_string(&mut proto_file))
-                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send>)
-                .context(ConfigurationValueError {
-                    option: "proto".to_string(),
-                    msg: format!("Failed to read '{}'", file_name),
-                })?;
+    let context = match matches.values_of("grpc") {
+        Some(files) => {
+            let content: Vec<_> = files
+                .map(|f| {
+                    let mut proto_file = String::new();
+                    std::fs::File::open(f)
+                        .and_then(|mut file| file.read_to_string(&mut proto_file))
+                        .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send>)
+                        .context(ConfigurationValueError {
+                            option: "grpc",
+                            msg: format!("Failed to read '{}'", f),
+                        })?;
+                    Ok(proto_file)
+                })
+                .collect::<Result<_, _>>()?;
 
-            proto::parse(&proto_file)
+            let content_ref: Vec<_> = content.iter().map(|s| s.as_str()).collect();
+            Context::parse(&content_ref)
                 .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send>)
-                .context(ConfigurationValueError {
-                    option: "proto".to_string(),
-                    msg: format!("Failed to parse '{}'", file_name),
-                })?
+                .context(ConfigurationError { option: "grpc" })?
         }
-        None => proto::empty(),
+        None => return Ok(None),
     };
 
-    Ok(Some(Box::new(GrpcDecoderFactory { pb: Rc::new(proto) })))
+    Ok(Some(Box::new(GrpcDecoderFactory {
+        ctx: Rc::new(context),
+    })))
 }
 
 impl DecoderFactory for GrpcDecoderFactory
@@ -54,7 +69,7 @@ impl DecoderFactory for GrpcDecoderFactory
         let mut path = request.uri.path().rsplit('/');
         let function = path.next().unwrap();
         let service = path.next().unwrap();
-        let service = match self.pb.get_service(service) {
+        let service = match self.ctx.get_service(service) {
             None => return None,
             Some(s) => s,
         };
@@ -64,33 +79,28 @@ impl DecoderFactory for GrpcDecoderFactory
         };
 
         let ty = match msg.part {
-            RequestPart::Request => &function.param.param_type,
-            RequestPart::Response => &function.retval.param_type,
+            RequestPart::Request => &function.input.message,
+            RequestPart::Response => &function.output.message,
         };
 
-        let ty = match ty {
-            ParamType::Unknown(_) => return None,
-            ParamType::Message(msg_ref) => msg_ref,
-        };
-
-        Some(Box::new(GrpcDecoder::new(*ty, self.pb.clone())))
+        Some(Box::new(GrpcDecoder::new(*ty, self.ctx.clone())))
     }
 }
 
 pub struct GrpcDecoder
 {
-    pub msg_ref: MessageRef,
-    pub pb: Rc<Protobuf>,
+    msg_ref: MessageRef,
+    ctx: Rc<Context>,
 }
 
 impl GrpcDecoder
 {
-    pub fn new(msg_ref: MessageRef, rc: Rc<Protobuf>) -> Self
+    pub fn new(msg_ref: MessageRef, rc: Rc<Context>) -> Self
     {
-        Self { msg_ref, pb: rc }
+        Self { msg_ref, ctx: rc }
     }
 
-    fn get_messages(&self, b: &[u8]) -> Result<Vec<ProtobufMessage>, String>
+    fn get_messages(&self, b: &[u8]) -> Result<Vec<MessageValue>, String>
     {
         let mut cursor = 0;
         let mut values = vec![];
@@ -110,11 +120,7 @@ impl GrpcDecoder
             }
             cursor += 5;
 
-            values.push(ProtobufMessage::from(
-                &b[cursor..cursor + len],
-                self.msg_ref,
-                &self.pb,
-            ));
+            values.push(self.msg_ref.decode(&b[cursor..cursor + len], &self.ctx));
             cursor += len;
         }
 
@@ -135,7 +141,7 @@ impl Decoder for GrpcDecoder
         }
 
         for v in &self.get_messages(&msg.content).unwrap() {
-            v.describe(0, &mut output, self.pb.as_ref());
+            output.append(&mut v.to_text(&self.ctx, 0));
             output.push(Text::raw("\n"));
         }
 
@@ -150,135 +156,56 @@ impl Decoder for GrpcDecoder
     }
 }
 
-#[derive(Debug)]
-pub enum ProtobufValue
+trait ToText
 {
-    Double(f64),
-    Float(f32),
-    Int32(i32),
-    Int64(i64),
-    UInt32(u32),
-    UInt64(u64),
-    SInt32(i32),
-    SInt64(i64),
-    Fixed32(u32),
-    Fixed64(u64),
-    SFixed32(i32),
-    SFixed64(i64),
-    Bool(bool),
-    String(String),
-    Bytes(Bytes),
-    Message(Box<ProtobufMessage>),
-    Enum(ProtobufEnum),
-    Invalid(ValueType, Bytes),
-
-    UnknownVarint(u128),
-    Unknown64(u64),
-    UnknownLengthDelimited(Bytes),
-    Unknown32(u32),
+    fn to_text<'a>(&self, ctx: &'a Context, indent: usize) -> Vec<Text<'a>>;
 }
 
-impl ProtobufValue
+impl ToText for protofish::decode::MessageValue
 {
-    pub fn parse(
-        data: &mut &[u8],
-        vt: &ValueType,
-        pb: &Protobuf,
-    ) -> Result<ProtobufValue, ProtobufValue>
+    fn to_text<'a>(&self, ctx: &'a Context, mut indent: usize) -> Vec<Text<'a>>
     {
-        let original = *data;
-        match Self::parse_maybe(data, vt, pb) {
-            Some(o) => Ok(o),
-            None => {
-                *data = &[];
-                Err(ProtobufValue::Invalid(
-                    vt.clone(),
-                    Bytes::copy_from_slice(original),
-                ))
-            }
+        // Panic here should indicate that msg_ref is for a different context.
+        let msg = ctx.resolve_message(self.msg_ref);
+
+        let mut v = Vec::with_capacity(2 + 5 * self.fields.len());
+        v.push(Text::raw(format!("{} {{\n", msg.name)));
+        indent += 1;
+        for f in &self.fields {
+            v.push(Text::raw("  ".repeat(indent)));
+            v.push(match msg.fields.get(&f.number) {
+                Some(f) => Text::raw(&f.name),
+                None => Text::raw(format!("[#{}]", f.number)),
+            });
+            v.push(Text::raw(": "));
+            v.append(&mut f.value.to_text(ctx, indent));
+            v.push(Text::raw("\n"));
+        }
+        indent -= 1;
+        v.push(Text::raw(format!("{}}}", "  ".repeat(indent))));
+        v
+    }
+}
+
+impl ToText for protofish::decode::EnumValue
+{
+    fn to_text<'a>(&self, ctx: &'a Context, _indent: usize) -> Vec<Text<'a>>
+    {
+        // Panic here should indicate that msg_ref is for a different context.
+        let e = ctx.resolve_enum(self.enum_ref);
+
+        match e.field_by_value(self.value) {
+            Some(field) => vec![Text::raw(&field.name)],
+            None => vec![Text::raw(self.value.to_string())],
         }
     }
+}
 
-    fn parse_maybe(data: &mut &[u8], vt: &ValueType, pb: &Protobuf) -> Option<ProtobufValue>
+impl ToText for protofish::decode::Value
+{
+    fn to_text<'a>(&self, ctx: &'a Context, indent: usize) -> Vec<Text<'a>>
     {
-        match vt {
-            ValueType::Double => {
-                into_8_bytes(data).map(|b| ProtobufValue::Double(f64::from_le_bytes(b)))
-            }
-            ValueType::Float => {
-                into_4_bytes(data).map(|b| ProtobufValue::Float(f32::from_le_bytes(b)))
-            }
-            ValueType::Int32 => i32::from_signed_varint(data).map(ProtobufValue::Int32),
-            ValueType::Int64 => i64::from_signed_varint(data).map(ProtobufValue::Int64),
-            ValueType::UInt32 => u32::from_unsigned_varint(data).map(ProtobufValue::UInt32),
-            ValueType::UInt64 => u64::from_unsigned_varint(data).map(ProtobufValue::UInt64),
-            ValueType::SInt32 => u32::from_unsigned_varint(data).map(|u| {
-                let sign = if u % 2 == 0 { 1i32 } else { -1i32 };
-                let magnitude = (u / 2) as i32;
-                ProtobufValue::SInt32(sign * magnitude)
-            }),
-            ValueType::SInt64 => u64::from_unsigned_varint(data).map(|u| {
-                let sign = if u % 2 == 0 { 1i64 } else { -1i64 };
-                let magnitude = (u / 2) as i64;
-                ProtobufValue::SInt64(sign * magnitude)
-            }),
-            ValueType::Fixed32 => {
-                into_4_bytes(data).map(|b| ProtobufValue::Fixed32(u32::from_le_bytes(b)))
-            }
-            ValueType::Fixed64 => {
-                into_8_bytes(data).map(|b| ProtobufValue::Fixed64(u64::from_le_bytes(b)))
-            }
-            ValueType::SFixed32 => {
-                into_4_bytes(data).map(|b| ProtobufValue::SFixed32(i32::from_le_bytes(b)))
-            }
-            ValueType::SFixed64 => {
-                into_8_bytes(data).map(|b| ProtobufValue::SFixed64(i64::from_le_bytes(b)))
-            }
-            ValueType::Bool => {
-                usize::from_unsigned_varint(data).map(|u| ProtobufValue::Bool(u != 0))
-            }
-            ValueType::String => read_string(data).map(ProtobufValue::String),
-            ValueType::Bytes => read_bytes(data).map(ProtobufValue::Bytes),
-            ValueType::Enum(eref) => i64::from_signed_varint(data).map(|v| {
-                ProtobufValue::Enum(ProtobufEnum {
-                    enum_ref: *eref,
-                    value: v,
-                })
-            }),
-            ValueType::Message(mref) => {
-                let length = usize::from_unsigned_varint(data)?;
-                let (consumed, remainder) = data.split_at(length);
-                *data = remainder;
-                Some(ProtobufValue::Message(Box::new(ProtobufMessage::from(
-                    consumed, *mref, pb,
-                ))))
-            }
-            _ => Self::parse_unknown(data, vt.tag()),
-        }
-    }
-
-    pub fn parse_unknown(data: &mut &[u8], vt: u8) -> Option<ProtobufValue>
-    {
-        Some(match vt {
-            0 => ProtobufValue::UnknownVarint(u128::from_unsigned_varint(data)?),
-            1 => ProtobufValue::Unknown64(u64::from_le_bytes(into_8_bytes(data)?)),
-            2 => {
-                let length = usize::from_unsigned_varint(data)?;
-                if length > data.len() {
-                    return None;
-                }
-                let (consumed, remainder) = data.split_at(length);
-                *data = remainder;
-                ProtobufValue::UnknownLengthDelimited(Bytes::copy_from_slice(consumed))
-            }
-            5 => ProtobufValue::Unknown32(u32::from_le_bytes(into_4_bytes(data)?)),
-            _ => return None,
-        })
-    }
-
-    pub fn describe(&self, indent: usize, output: &mut Vec<Text>, pb: &Protobuf)
-    {
-        output.push(match self {
+        vec![match self {
             Self::Double(v) => Text::raw(format!("{}", v)),
             Self::Float(v) => Text::raw(format!("{}", v)),
             Self::Int32(v) => Text::raw(format!("{}", v)),
@@ -294,285 +221,12 @@ impl ProtobufValue
             Self::Bool(v) => Text::raw(format!("{}", v)),
             Self::String(v) => Text::raw(format!("{:?}", v)),
             Self::Bytes(v) => Text::raw(format!("{:?}", v)),
-            Self::Invalid(vt, v) => Text::raw(format!("!! {:?} -> {:?}", vt, v)),
 
-            Self::UnknownVarint(v) => Text::raw(format!("[Varint] {}", v)),
-            Self::Unknown64(v) => Text::raw(format!("[64bit] {}", v)),
-            Self::UnknownLengthDelimited(v) => Text::raw(format!("[Sized] {:?}", v)),
-            Self::Unknown32(v) => Text::raw(format!("[32bit] {}", v)),
+            Self::Enum(v) => return v.to_text(ctx, indent),
+            Self::Message(v) => return v.to_text(ctx, indent),
 
-            Self::Enum(v) => return v.describe(output, pb),
-            Self::Message(v) => return v.describe(indent, output, pb),
-        })
+            Self::Unknown(unk) => Text::raw(format!("!! {:?}", unk)),
+            Self::Incomplete(bytes) => Text::raw(format!("Incomplete({:X})", bytes)),
+        }]
     }
 }
-
-fn into_8_bytes(data: &mut &[u8]) -> Option<[u8; 8]>
-{
-    match (*data).try_into() {
-        Ok(v) => {
-            *data = &data[8..];
-            Some(v)
-        }
-        Err(_) => None,
-    }
-}
-
-fn into_4_bytes(data: &mut &[u8]) -> Option<[u8; 4]>
-{
-    match (*data).try_into() {
-        Ok(v) => {
-            *data = &data[4..];
-            Some(v)
-        }
-        Err(_) => None,
-    }
-}
-
-fn read_string(data: &mut &[u8]) -> Option<String>
-{
-    let original = *data;
-    let len = usize::from_unsigned_varint(data)?;
-    if len > data.len() {
-        *data = original;
-        return None;
-    }
-    let (str_data, remainder) = data.split_at(len);
-    *data = remainder;
-    Some(String::from_utf8_lossy(str_data).to_string())
-}
-
-fn read_bytes(data: &mut &[u8]) -> Option<Bytes>
-{
-    let original = *data;
-    let len = usize::from_unsigned_varint(data)?;
-    if len > data.len() {
-        *data = original;
-        return None;
-    }
-    let (str_data, remainder) = data.split_at(len);
-    *data = remainder;
-    Some(Bytes::copy_from_slice(str_data))
-}
-
-#[derive(Debug)]
-pub struct ProtobufEnum
-{
-    enum_ref: EnumRef,
-    value: i64,
-}
-
-#[derive(Debug)]
-pub struct ProtobufMessage
-{
-    msg_ref: MessageRef,
-    fields: Vec<ProtobufMessageField>,
-    garbage: Option<bytes::Bytes>,
-}
-
-impl ProtobufMessage
-{
-    fn from(mut data: &[u8], msg_ref: MessageRef, pb: &Protobuf) -> ProtobufMessage
-    {
-        let msg_desc = pb.resolve_message(msg_ref);
-        let mut msg = ProtobufMessage {
-            msg_ref,
-            fields: vec![],
-            garbage: None,
-        };
-
-        loop {
-            let l = data.len();
-            if data.len() == 0 {
-                break;
-            }
-
-            let tag = match u64::from_unsigned_varint(&mut data) {
-                Some(tag) => tag,
-                None => {
-                    msg.garbage = Some(Bytes::copy_from_slice(data));
-                    break;
-                }
-            };
-
-            let field_id = tag >> 3;
-            let field_type = (tag & 0x07) as u8;
-
-            let value = match msg_desc.get_field(field_id) {
-                Some(field) if field.field_type.tag() == field_type => {
-                    ProtobufValue::parse(&mut data, &field.field_type, pb).unwrap_or_else(|e| e)
-                }
-                _ => match ProtobufValue::parse_unknown(&mut data, field_type) {
-                    Some(v) => v,
-                    None => {
-                        let invalid = ProtobufValue::Invalid(
-                            ValueType::Unknown(format!("f:{},{}", field_type, l)),
-                            Bytes::copy_from_slice(data),
-                        );
-                        data = &[];
-                        invalid
-                    }
-                },
-            };
-
-            msg.fields.push(ProtobufMessageField {
-                number: field_id,
-                value: value,
-            })
-        }
-
-        msg
-    }
-
-    pub fn describe(&self, indent: usize, output: &mut Vec<Text>, pb: &Protobuf)
-    {
-        let message = pb.resolve_message(self.msg_ref);
-        output.push(Text::raw(format!("{} {{\n", message.name)));
-        {
-            let indent = indent + 1;
-            for f in &self.fields {
-                let field_name = match message.get_field(f.number) {
-                    Some(f) => f.name.to_string(),
-                    None => format!("[#{}]", f.number),
-                };
-                output.push(Text::raw(format!(
-                    "{}{}: ",
-                    "  ".repeat(indent),
-                    field_name
-                )));
-                f.value.describe(indent, output, pb);
-                output.push(Text::raw("\n"));
-            }
-        }
-        output.push(Text::raw(format!("{}}}", "  ".repeat(indent))));
-    }
-}
-
-impl ProtobufEnum
-{
-    pub fn describe(&self, output: &mut Vec<Text>, pb: &Protobuf)
-    {
-        let enum_type = pb.resolve_enum(self.enum_ref);
-        output.push(Text::raw(
-            enum_type
-                .get_field(self.value)
-                .map(|e| e.name.to_string())
-                .unwrap_or_else(|| self.value.to_string()),
-        ));
-    }
-}
-
-#[derive(Debug)]
-pub struct ProtobufMessageField
-{
-    number: u64,
-    value: ProtobufValue,
-}
-
-trait FromUnsignedVarint: Sized
-{
-    fn from_unsigned_varint(data: &mut &[u8]) -> Option<Self>;
-}
-
-impl<T: Default + TryFrom<u64>> FromUnsignedVarint for T
-{
-    fn from_unsigned_varint(data: &mut &[u8]) -> Option<Self>
-    {
-        let mut result = 0u64;
-        let mut idx = 0;
-        loop {
-            if idx >= data.len() {
-                return None;
-            }
-
-            let b = data[idx];
-            let value = (b & 0x7f) as u64;
-            result += value << (idx * 7);
-
-            idx += 1;
-            if b & 0x80 == 0 {
-                break;
-            }
-        }
-        let result = T::try_from(result).ok()?;
-
-        *data = &data[idx..];
-        Some(result)
-    }
-}
-
-trait FromSignedVarint: Sized
-{
-    fn from_signed_varint(data: &mut &[u8]) -> Option<Self>;
-}
-
-impl<T: Default + TryFrom<i64>> FromSignedVarint for T
-{
-    fn from_signed_varint(data: &mut &[u8]) -> Option<Self>
-    {
-        let mut result = 0i64;
-        let mut idx = 0;
-        loop {
-            if idx >= data.len() {
-                return None;
-            }
-
-            let b = data[idx];
-            let value = (b & 0x7f) as i64;
-            result += value << (idx * 7);
-
-            idx += 1;
-            if b & 0x80 == 0 {
-                break;
-            }
-        }
-        let result = T::try_from(result).ok()?;
-
-        *data = &data[idx..];
-        Some(result)
-    }
-}
-
-/*
-fn read_varint64(data: &mut &[u8]) -> Option<u64>
-{
-    let mut result = 0u64;
-    let mut idx = 0;
-    loop {
-        let b = data[idx];
-        result += ((b & 0x7f) as u64) << (idx * 7);
-
-        idx += 1;
-        if b & 0x80 == 0 {
-            break;
-        } else if idx >= data.len() {
-            // End of data before the varint ended.
-            return None;
-        }
-    }
-
-    *data = &data[idx..];
-    Some(result)
-}
-
-fn read_varint128(data: &mut &[u8]) -> Option<u128>
-{
-    let mut result = 0u128;
-    let mut idx = 0;
-    loop {
-        let b = data[idx];
-        result += ((b & 0x7f) as u128) << (idx * 7);
-
-        idx += 1;
-        if b & 0x80 == 0 {
-            break;
-        } else if idx >= data.len() {
-            // End of data before the varint ended.
-            return None;
-        }
-    }
-
-    *data = &data[idx..];
-    Some(result)
-}
-*/

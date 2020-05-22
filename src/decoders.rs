@@ -1,4 +1,4 @@
-use snafu::{ResultExt, Snafu};
+use snafu::Snafu;
 use tui::widgets::Text;
 
 use crate::ui_state::{MessageData, RequestData};
@@ -12,8 +12,15 @@ pub enum Error
     #[snafu(display("Parameter {}: {}", option, msg))]
     ConfigurationValueError
     {
-        option: String,
+        option: &'static str,
         msg: String,
+        source: Box<dyn std::error::Error + Send>,
+    },
+
+    #[snafu(display("Parameter {}: {}", option, source))]
+    ConfigurationError
+    {
+        option: &'static str,
         source: Box<dyn std::error::Error + Send>,
     },
 }

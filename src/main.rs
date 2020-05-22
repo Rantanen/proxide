@@ -1,7 +1,6 @@
 use clap::{App, Arg};
 use log::debug;
 use snafu::{ResultExt, Snafu};
-use std::io::Read;
 use std::net::SocketAddr;
 use std::sync::mpsc::Sender;
 use tokio::net::{TcpListener, TcpStream};
@@ -10,7 +9,6 @@ use tokio::sync::oneshot;
 mod connection;
 mod decoders;
 mod error;
-mod proto;
 mod ui;
 mod ui_state;
 
@@ -63,7 +61,7 @@ pub async fn main() -> Result<(), Error>
     )
     .unwrap();
 
-    let matches = App::new("Proxide - HTTP2 debugging proxy")
+    let app = App::new("Proxide - HTTP2 debugging proxy")
         .version(env!("CARGO_PKG_VERSION"))
         .author("Mikko Rantanen <rantanen@jubjubnest.net>")
         .arg(
@@ -81,15 +79,10 @@ pub async fn main() -> Result<(), Error>
                 .required(true)
                 .help("Specify target port")
                 .takes_value(true),
-        )
-        .arg(
-            Arg::with_name("proto")
-                .short("p")
-                .value_name("PROTO_FILE")
-                .help("Specify .proto file for decoding Protobuf messages")
-                .takes_value(true),
-        )
-        .get_matches();
+        );
+    let app = decoders::grpc::setup_args(app);
+
+    let matches = app.get_matches();
 
     let (abort_tx, mut abort_rx) = oneshot::channel::<()>();
     let (ui_tx, ui_rx) = std::sync::mpsc::channel();

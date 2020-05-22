@@ -12,7 +12,6 @@ use tokio::sync::oneshot;
 use tui::{backend::CrosstermBackend, Terminal};
 
 use crate::decoders::DecoderFactory;
-use crate::proto::Protobuf;
 use crate::ui_state::{HandleResult, ProxideUi, UiEvent};
 
 #[derive(Debug, Snafu)]

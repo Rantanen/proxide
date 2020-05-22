@@ -4,7 +4,6 @@ use crossterm::event::{Event as CTEvent, KeyCode};
 use http::{HeaderMap, Method, Uri};
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::rc::Rc;
 use tui::backend::Backend;
 use tui::buffer::Buffer;
 use tui::layout::{Constraint, Direction, Layout, Rect};
@@ -14,7 +13,6 @@ use tui::widgets::{Block, Borders, Paragraph, Row, Table, TableState, Text, Widg
 use uuid::Uuid;
 
 use crate::decoders::{Decoder, DecoderFactory};
-use crate::proto::Protobuf;
 
 #[derive(Debug)]
 pub enum UiEvent
