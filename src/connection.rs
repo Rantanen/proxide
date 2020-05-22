@@ -14,6 +14,8 @@ use std::sync::mpsc::Sender;
 use tokio::net::TcpStream;
 use uuid::Uuid;
 
+use crate::session::events::*;
+use crate::session::*;
 use crate::ui_state::*;
 
 #[derive(Debug, Snafu)]
@@ -50,7 +52,7 @@ impl ProxyConnection
         client: TcpStream,
         server: TcpStream,
         src_addr: SocketAddr,
-        ui: Sender<UiEvent>,
+        ui: Sender<SessionEvent>,
     ) -> Result<ProxyConnection>
     {
         let client_connection = server::Builder::new()
@@ -82,7 +84,7 @@ impl ProxyConnection
             server_stream,
         };
 
-        ui.send(UiEvent::NewConnection(NewConnectionEvent {
+        ui.send(SessionEvent::NewConnection(NewConnectionEvent {
             uuid: conn.uuid,
             client_addr: src_addr,
             timestamp: Local::now(),
@@ -91,7 +93,7 @@ impl ProxyConnection
         Ok(conn)
     }
 
-    pub async fn run(&mut self, ui: Sender<UiEvent>) -> Result<()>
+    pub async fn run(&mut self, ui: Sender<SessionEvent>) -> Result<()>
     {
         let r = {
             let ui = ui.clone();
@@ -128,11 +130,11 @@ impl ProxyConnection
         }
         .await;
 
-        ui.send(UiEvent::ConnectionClosed {
+        ui.send(SessionEvent::ConnectionClosed {
             uuid: self.uuid,
             status: match r {
-                Ok(_) => crate::ui_state::Status::Succeeded,
-                Err(_) => crate::ui_state::Status::Failed,
+                Ok(_) => Status::Succeeded,
+                Err(_) => Status::Failed,
             },
         })
         .unwrap();
@@ -157,13 +159,13 @@ impl ProxyRequest
         client_request: Request<RecvStream>,
         client_response: SendResponse<Bytes>,
         server_stream: &mut client::SendRequest<Bytes>,
-        ui: &Sender<UiEvent>,
+        ui: &Sender<SessionEvent>,
     ) -> Result<ProxyRequest>
     {
         let uuid = Uuid::new_v4();
         let (client_head, client_request) = client_request.into_parts();
 
-        ui.send(UiEvent::NewRequest(NewRequestEvent {
+        ui.send(SessionEvent::NewRequest(NewRequestEvent {
             connection_uuid,
             uuid: uuid,
             uri: client_head.uri.clone(),
@@ -192,7 +194,7 @@ impl ProxyRequest
         })
     }
 
-    pub async fn execute(self, ui: Sender<UiEvent>) -> Result<()>
+    pub async fn execute(self, ui: Sender<SessionEvent>) -> Result<()>
     {
         // Acquire futures that are responsible for streaming the request and the response. These
         // are set up in their own futures to allow parallel request/response streaming to occur.
@@ -245,7 +247,7 @@ impl ProxyRequest
             })?;
 
             let (response_head, response_body) = response.into_parts();
-            ui.send(UiEvent::NewResponse(NewResponseEvent {
+            ui.send(SessionEvent::NewResponse(NewResponseEvent {
                 uuid: uuid,
                 connection_uuid,
                 timestamp: Local::now(),
@@ -292,11 +294,11 @@ impl ProxyRequest
         // Now handle both futures in parallel.
         let (r1, r2) = join!(request_future, response_future);
         let r = r1.and(r2);
-        ui.send(UiEvent::RequestDone(RequestDoneEvent {
+        ui.send(SessionEvent::RequestDone(RequestDoneEvent {
             uuid: self.uuid,
             status: match fatal_error(&r) {
-                true => crate::ui_state::Status::Failed,
-                false => crate::ui_state::Status::Succeeded,
+                true => Status::Failed,
+                false => Status::Succeeded,
             },
             timestamp: Local::now(),
         }))
@@ -308,7 +310,7 @@ impl ProxyRequest
 async fn pipe_stream(
     mut source: RecvStream,
     target: &mut SendStream<Bytes>,
-    ui: Sender<UiEvent>,
+    ui: Sender<SessionEvent>,
     uuid: Uuid,
     part: RequestPart,
 ) -> Result<Option<HeaderMap>>
@@ -319,7 +321,7 @@ async fn pipe_stream(
         })?;
 
         // Send a notification to the UI.
-        ui.send(UiEvent::MessageData(MessageDataEvent {
+        ui.send(SessionEvent::MessageData(MessageDataEvent {
             uuid: uuid,
             data: b.clone(),
             part,
@@ -342,7 +344,7 @@ async fn pipe_stream(
 }
 
 async fn notify_message_done(
-    ui: Sender<UiEvent>,
+    ui: Sender<SessionEvent>,
     uuid: Uuid,
     r: Result<Option<HeaderMap>>,
     part: RequestPart,
@@ -350,7 +352,7 @@ async fn notify_message_done(
 {
     match r {
         Ok(trailers) => ui
-            .send(UiEvent::MessageDone(MessageDoneEvent {
+            .send(SessionEvent::MessageDone(MessageDoneEvent {
                 uuid: uuid,
                 part,
                 status: Status::Succeeded,
@@ -359,7 +361,7 @@ async fn notify_message_done(
             }))
             .unwrap(),
         Err(e) => {
-            ui.send(UiEvent::MessageDone(MessageDoneEvent {
+            ui.send(SessionEvent::MessageDone(MessageDoneEvent {
                 uuid: uuid,
                 part,
                 status: Status::Succeeded,

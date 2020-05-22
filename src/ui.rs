@@ -12,6 +12,7 @@ use tokio::sync::oneshot;
 use tui::{backend::CrosstermBackend, Terminal};
 
 use crate::decoders::DecoderFactory;
+use crate::session::events::SessionEvent;
 use crate::ui_state::{HandleResult, ProxideUi, UiEvent};
 
 #[derive(Debug, Snafu)]
@@ -35,8 +36,7 @@ pub type Result<S, E = Error> = std::result::Result<S, E>;
 
 pub fn main(
     abort_tx: oneshot::Sender<()>,
-    ui_tx: mpsc::Sender<UiEvent>,
-    ui_rx: mpsc::Receiver<UiEvent>,
+    session_rx: mpsc::Receiver<SessionEvent>,
     decoders: Vec<Box<dyn DecoderFactory>>,
 ) -> Result<()>
 {
@@ -51,10 +51,18 @@ pub fn main(
 
     terminal.draw(|f| state.draw(f)).unwrap();
 
+    let (ui_tx, ui_rx) = std::sync::mpsc::channel();
+
     let crossterm_tx = ui_tx.clone();
     thread::spawn(move || loop {
         let e = event::read().unwrap();
         crossterm_tx.send(UiEvent::Crossterm(e)).unwrap();
+    });
+
+    thread::spawn(move || {
+        while let Ok(e) = session_rx.recv() {
+            ui_tx.send(UiEvent::SessionEvent(e)).unwrap();
+        }
     });
 
     loop {

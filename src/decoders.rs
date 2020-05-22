@@ -1,7 +1,7 @@
 use snafu::Snafu;
 use tui::widgets::Text;
 
-use crate::ui_state::{MessageData, RequestData};
+use crate::session::{MessageData, RequestData};
 
 pub mod grpc;
 pub mod raw;

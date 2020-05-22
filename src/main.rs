@@ -9,6 +9,7 @@ use tokio::sync::oneshot;
 mod connection;
 mod decoders;
 mod error;
+mod session;
 mod ui;
 mod ui_state;
 
@@ -33,7 +34,7 @@ pub enum Error
 type Result<S, E = Error> = std::result::Result<S, E>;
 
 async fn handle_socket(
-    tx: Sender<ui_state::UiEvent>,
+    tx: Sender<session::events::SessionEvent>,
     client_stream: TcpStream,
     src_addr: SocketAddr,
     target_port: &str,
@@ -105,7 +106,7 @@ pub async fn main() -> Result<(), Error>
             decoders.push(decoders::grpc::initialize(&matches).context(DecoderError {})?);
             let decoders = decoders.into_iter().filter_map(|o| o).collect();
 
-            Ok(ui::main(abort_tx, ui_tx, ui_rx, decoders).context(UiError {})?)
+            Ok(ui::main(abort_tx, ui_rx, decoders).context(UiError {})?)
         }
     });
 
@@ -122,7 +123,7 @@ pub async fn main() -> Result<(), Error>
 }
 
 fn new_connection(
-    tx: Sender<ui_state::UiEvent>,
+    tx: Sender<session::events::SessionEvent>,
     result: Result<(TcpStream, SocketAddr), std::io::Error>,
     target_port: &str,
 )

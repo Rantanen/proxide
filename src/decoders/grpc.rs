@@ -6,7 +6,7 @@ use std::rc::Rc;
 use tui::widgets::Text;
 
 use super::{ConfigurationError, ConfigurationValueError, Decoder, DecoderFactory, Result};
-use crate::ui_state::{MessageData, RequestData, RequestPart};
+use crate::session::{MessageData, RequestData, RequestPart};
 
 pub struct GrpcDecoderFactory
 {
