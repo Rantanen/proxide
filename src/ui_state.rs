@@ -2,6 +2,7 @@ use bytes::BytesMut;
 use chrono::{prelude::*, Duration};
 use crossterm::event::{Event as CTEvent, KeyCode};
 use http::{HeaderMap, Method, Uri};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use tui::backend::Backend;
@@ -87,17 +88,43 @@ pub struct RequestDoneEvent
 
 pub struct ProxideUi<B>
 {
-    pub state: State,
-    pub ui_stack: Vec<Box<dyn View<B>>>,
+    pub session: Session,
     pub size: Rect,
+    pub ui_stack: Vec<Box<dyn View<B>>>,
 }
 
+pub struct Runtime
+{
+    pub decoder_factories: Vec<Box<dyn DecoderFactory>>,
+}
+
+pub struct Session
+{
+    pub data: SessionData,
+    pub state: State,
+    pub runtime: Runtime,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct SessionData
+{
+    pub connections: IndexedVec<ConnectionData>,
+    pub requests: IndexedVec<EncodedRequest>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct IndexedVec<T>
+{
+    pub items: Vec<T>,
+    pub items_by_uuid: HashMap<Uuid, usize>,
+}
+
+#[derive(Default)]
 pub struct State
 {
     pub connections: ProxideTable<ConnectionData>,
     pub requests: ProxideTable<EncodedRequest>,
     pub active_window: Window,
-    pub decoder_factories: Vec<Box<dyn DecoderFactory>>,
 }
 
 #[derive(PartialEq)]
@@ -106,6 +133,14 @@ pub enum Window
     _Connections,
     Requests,
     Details,
+}
+
+impl Default for Window
+{
+    fn default() -> Self
+    {
+        Self::Requests
+    }
 }
 
 pub enum HandleResult<B: Backend>
@@ -118,9 +153,9 @@ pub enum HandleResult<B: Backend>
 
 pub trait View<B: Backend>
 {
-    fn draw(&mut self, state: &mut State, f: &mut Frame<B>, chunk: Rect);
-    fn on_input(&mut self, state: &mut State, e: CTEvent, size: Rect) -> HandleResult<B>;
-    fn help_text(&self, state: &State, size: Rect) -> String;
+    fn draw(&mut self, session: &mut Session, f: &mut Frame<B>, chunk: Rect);
+    fn on_input(&mut self, session: &mut Session, e: CTEvent, size: Rect) -> HandleResult<B>;
+    fn help_text(&self, state: &Session, size: Rect) -> String;
 }
 
 #[derive(Default)]
@@ -131,7 +166,7 @@ struct MainView
 
 impl<B: Backend> View<B> for MainView
 {
-    fn draw(&mut self, state: &mut State, f: &mut Frame<B>, chunk: Rect)
+    fn draw(&mut self, session: &mut Session, f: &mut Frame<B>, chunk: Rect)
     {
         let chunks = Layout::default()
             .direction(Direction::Horizontal)
@@ -147,27 +182,38 @@ impl<B: Backend> View<B> for MainView
             .split(chunk);
 
         // state.connections.draw(&mut f, chunks[0]);
-        state
-            .requests
-            .draw(f, chunks[0], state.active_window == Window::Requests);
+        session.state.requests.draw(
+            &session.data.requests,
+            f,
+            chunks[0],
+            session.state.active_window == Window::Requests,
+        );
 
-        self.details_view.draw(state, f, chunks[1]);
+        self.details_view.draw(session, f, chunks[1]);
     }
 
-    fn on_input(&mut self, state: &mut State, e: CTEvent, size: Rect) -> HandleResult<B>
+    fn on_input(&mut self, session: &mut Session, e: CTEvent, size: Rect) -> HandleResult<B>
     {
         // Handle active window input first.
-        let handled = match state.active_window {
-            Window::_Connections => state.connections.on_input::<B>(e, size),
-            Window::Requests => state.requests.on_input(e, size),
+        let handled = match session.state.active_window {
+            Window::_Connections => {
+                session
+                    .state
+                    .connections
+                    .on_input::<B>(&session.data.connections, e, size)
+            }
+            Window::Requests => session
+                .state
+                .requests
+                .on_input(&session.data.requests, e, size),
             Window::Details => HandleResult::Ignore,
         };
 
         if let HandleResult::Ignore = handled {
             match e {
                 CTEvent::Key(key) => match key.code {
-                    KeyCode::Char('r') => state.active_window = Window::Requests,
-                    KeyCode::Char('d') => state.active_window = Window::Details,
+                    KeyCode::Char('r') => session.state.active_window = Window::Requests,
+                    KeyCode::Char('d') => session.state.active_window = Window::Details,
                     KeyCode::Char('q') => {
                         return HandleResult::PushView(Box::new(MessageView(true, 0)))
                     }
@@ -183,7 +229,7 @@ impl<B: Backend> View<B> for MainView
         HandleResult::Update
     }
 
-    fn help_text(&self, _state: &State, _size: Rect) -> String
+    fn help_text(&self, _state: &Session, _size: Rect) -> String
     {
         "Up/Down, j/k: Move up/down".to_string()
     }
@@ -193,14 +239,18 @@ impl<B: Backend> View<B> for MainView
 struct DetailsView;
 impl<B: Backend> View<B> for DetailsView
 {
-    fn draw(&mut self, state: &mut State, f: &mut Frame<B>, chunk: Rect)
+    fn draw(&mut self, session: &mut Session, f: &mut Frame<B>, chunk: Rect)
     {
-        let request = match state.requests.selected_mut() {
+        let request = match session
+            .state
+            .requests
+            .selected_mut(&mut session.data.requests)
+        {
             Some(r) => r,
             None => return,
         };
 
-        let block = create_block("[D]etails", state.active_window == Window::Details);
+        let block = create_block("[D]etails", session.state.active_window == Window::Details);
         f.render_widget(block, chunk);
 
         let details_chunks = Layout::default()
@@ -241,7 +291,7 @@ impl<B: Backend> View<B> for DetailsView
         f.render_widget(details, details_chunks[0]);
 
         request.request_msg.draw(
-            &state.decoder_factories,
+            &session.runtime.decoder_factories,
             &request.request_data,
             "Re[q]uest Data",
             f,
@@ -250,7 +300,7 @@ impl<B: Backend> View<B> for DetailsView
             0,
         );
         request.response_msg.draw(
-            &state.decoder_factories,
+            &session.runtime.decoder_factories,
             &request.request_data,
             "Re[s]ponse Data",
             f,
@@ -260,12 +310,12 @@ impl<B: Backend> View<B> for DetailsView
         );
     }
 
-    fn on_input(&mut self, _state: &mut State, _e: CTEvent, _size: Rect) -> HandleResult<B>
+    fn on_input(&mut self, _session: &mut Session, _e: CTEvent, _size: Rect) -> HandleResult<B>
     {
         HandleResult::Ignore
     }
 
-    fn help_text(&self, _state: &State, _size: Rect) -> String
+    fn help_text(&self, _session: &Session, _size: Rect) -> String
     {
         String::new()
     }
@@ -274,9 +324,13 @@ impl<B: Backend> View<B> for DetailsView
 struct MessageView(bool, u16);
 impl<B: Backend> View<B> for MessageView
 {
-    fn draw(&mut self, state: &mut State, f: &mut Frame<B>, chunk: Rect)
+    fn draw(&mut self, session: &mut Session, f: &mut Frame<B>, chunk: Rect)
     {
-        let request = match state.requests.selected_mut() {
+        let request = match session
+            .state
+            .requests
+            .selected_mut(&mut session.data.requests)
+        {
             Some(r) => r,
             None => return,
         };
@@ -287,7 +341,7 @@ impl<B: Backend> View<B> for MessageView
         };
         let title = format!("{} (offset {})", title, self.1);
         data.draw(
-            &state.decoder_factories,
+            &session.runtime.decoder_factories,
             &request.request_data,
             &title,
             f,
@@ -297,7 +351,7 @@ impl<B: Backend> View<B> for MessageView
         );
     }
 
-    fn on_input(&mut self, _state: &mut State, e: CTEvent, size: Rect) -> HandleResult<B>
+    fn on_input(&mut self, _session: &mut Session, e: CTEvent, size: Rect) -> HandleResult<B>
     {
         match e {
             CTEvent::Key(key) => match key.code {
@@ -313,7 +367,7 @@ impl<B: Backend> View<B> for MessageView
         HandleResult::Update
     }
 
-    fn help_text(&self, _state: &State, _size: Rect) -> String
+    fn help_text(&self, _session: &Session, _size: Rect) -> String
     {
         "Up/Down, j/k, PgUp/PgDn: Scroll; Tab: Switch Request/Response".to_string()
     }
@@ -324,11 +378,15 @@ impl<B: Backend> ProxideUi<B>
     pub fn new(decoders: Vec<Box<dyn DecoderFactory>>, size: Rect) -> Self
     {
         Self {
-            state: State {
-                connections: ProxideTable::new(),
-                requests: ProxideTable::new(),
-                active_window: Window::Requests,
-                decoder_factories: decoders,
+            session: Session {
+                data: SessionData {
+                    connections: IndexedVec::new(),
+                    requests: IndexedVec::new(),
+                },
+                state: State::default(),
+                runtime: Runtime {
+                    decoder_factories: decoders,
+                },
             },
             ui_stack: vec![Box::new(MainView::default())],
             size,
@@ -338,13 +396,13 @@ impl<B: Backend> ProxideUi<B>
     pub fn handle(&mut self, e: UiEvent) -> HandleResult<B>
     {
         match e {
-            UiEvent::NewConnection(e) => self.state.on_new_connection(e),
-            UiEvent::NewRequest(e) => self.state.on_new_request(e),
-            UiEvent::NewResponse(e) => self.state.on_new_response(e),
-            // UiEvent::RequestStatus(e) => self.state.on_request_status(e),
-            UiEvent::MessageData(e) => self.state.on_message_data(e),
-            UiEvent::MessageDone(e) => self.state.on_message_done(e),
-            UiEvent::RequestDone(e) => self.state.on_request_done(e),
+            UiEvent::NewConnection(e) => self.session.on_new_connection(e),
+            UiEvent::NewRequest(e) => self.session.on_new_request(e),
+            UiEvent::NewResponse(e) => self.session.on_new_response(e),
+            // UiEvent::RequestStatus(e) => self.session.on_request_status(e),
+            UiEvent::MessageData(e) => self.session.on_message_data(e),
+            UiEvent::MessageDone(e) => self.session.on_message_done(e),
+            UiEvent::RequestDone(e) => self.session.on_request_done(e),
             UiEvent::ConnectionClosed { .. } => {}
             UiEvent::Crossterm(e) => return self.on_input(e, self.size),
             // UiEvent::LogMessage(m) => self.debug.msgs.push_back(m),
@@ -359,7 +417,7 @@ impl<B: Backend> ProxideUi<B>
             .ui_stack
             .last_mut()
             .unwrap()
-            .on_input(&mut self.state, e, size)
+            .on_input(&mut self.session, e, size)
         {
             r @ HandleResult::Update | r @ HandleResult::Quit => return r,
             HandleResult::Ignore => {}
@@ -404,7 +462,7 @@ impl<B: Backend> ProxideUi<B>
             height: chunk.height - 2,
         };
         let view = self.ui_stack.last_mut().unwrap();
-        view.draw(&mut self.state, &mut f, view_chunk);
+        view.draw(&mut self.session, &mut f, view_chunk);
 
         let help_chunk = Rect {
             x: 1,
@@ -412,13 +470,13 @@ impl<B: Backend> ProxideUi<B>
             width: chunk.width - 2,
             height: 1,
         };
-        let help_text = view.help_text(&self.state, self.size);
+        let help_text = view.help_text(&self.session, self.size);
         let help_line = TextLine(&help_text);
         f.render_widget(help_line, help_chunk);
     }
 }
 
-impl State
+impl Session
 {
     fn on_new_connection(&mut self, e: NewConnectionEvent)
     {
@@ -429,12 +487,12 @@ impl State
             end_timestamp: None,
             status: Status::InProgress,
         };
-        self.connections.push(e.uuid, data);
+        self.data.connections.push(e.uuid, data);
     }
 
     fn on_new_request(&mut self, e: NewRequestEvent)
     {
-        self.requests.push(
+        self.data.requests.push(
             e.uuid,
             EncodedRequest {
                 request_data: RequestData {
@@ -456,7 +514,7 @@ impl State
 
     fn on_new_response(&mut self, e: NewResponseEvent)
     {
-        let request = self.requests.get_mut_by_uuid(e.uuid);
+        let request = self.data.requests.get_mut_by_uuid(e.uuid);
         if let Some(request) = request {
             request.response_msg.data.headers = e.headers;
             request.response_msg.data.start_timestamp = Some(e.timestamp);
@@ -466,7 +524,7 @@ impl State
 
     fn on_message_data(&mut self, e: MessageDataEvent)
     {
-        let request = self.requests.get_mut_by_uuid(e.uuid);
+        let request = self.data.requests.get_mut_by_uuid(e.uuid);
         if let Some(request) = request {
             let part_msg = match e.part {
                 RequestPart::Request => &mut request.request_msg,
@@ -479,7 +537,7 @@ impl State
 
     fn on_message_done(&mut self, e: MessageDoneEvent)
     {
-        let request = self.requests.get_mut_by_uuid(e.uuid);
+        let request = self.data.requests.get_mut_by_uuid(e.uuid);
         if let Some(request) = request {
             let part_msg = match e.part {
                 RequestPart::Request => &mut request.request_msg,
@@ -492,7 +550,7 @@ impl State
 
     fn on_request_done(&mut self, e: RequestDoneEvent)
     {
-        let request = self.requests.get_mut_by_uuid(e.uuid);
+        let request = self.data.requests.get_mut_by_uuid(e.uuid);
         if let Some(request) = request {
             request.request_data.end_timestamp = Some(e.timestamp);
             request.request_data.status = e.status;
@@ -502,21 +560,30 @@ impl State
 
 pub struct ProxideTable<T>
 {
-    items: Vec<T>,
-    items_by_uuid: HashMap<Uuid, usize>,
     state: TableState,
     user_selected: Option<usize>,
+    phantom: std::marker::PhantomData<T>,
 }
 
-impl<T> ProxideTable<T>
+impl<T> Default for ProxideTable<T>
+{
+    fn default() -> Self
+    {
+        Self {
+            state: Default::default(),
+            user_selected: None,
+            phantom: std::marker::PhantomData::<T>,
+        }
+    }
+}
+
+impl<T> IndexedVec<T>
 {
     fn new() -> Self
     {
         Self {
             items: vec![],
             items_by_uuid: HashMap::new(),
-            state: TableState::default(),
-            user_selected: None,
         }
     }
 
@@ -524,10 +591,6 @@ impl<T> ProxideTable<T>
     {
         self.items_by_uuid.insert(uuid, self.items.len());
         self.items.push(item);
-
-        if self.user_selected.is_none() {
-            self.state.select(Some(self.items.len() - 1))
-        }
     }
 
     fn get_mut_by_uuid(&mut self, uuid: Uuid) -> Option<&mut T>
@@ -535,22 +598,32 @@ impl<T> ProxideTable<T>
         let idx = self.items_by_uuid.get(&uuid)?;
         self.items.get_mut(*idx)
     }
+}
 
-    fn on_input<B: Backend>(&mut self, e: CTEvent, _size: Rect) -> HandleResult<B>
+impl<T> ProxideTable<T>
+{
+    fn on_input<B: Backend>(
+        &mut self,
+        content: &IndexedVec<T>,
+        e: CTEvent,
+        _size: Rect,
+    ) -> HandleResult<B>
     {
         match e {
             CTEvent::Key(key) => match key.code {
                 KeyCode::Char('k') | KeyCode::Up => self.user_select(
+                    content,
                     self.user_selected
                         .or_else(|| self.state.selected())
                         .map(|i| i.saturating_sub(1)),
                 ),
                 KeyCode::Char('j') | KeyCode::Down => self.user_select(
+                    content,
                     self.user_selected
                         .or_else(|| self.state.selected())
                         .map(|i| i + 1),
                 ),
-                KeyCode::Esc => self.user_select(None),
+                KeyCode::Esc => self.user_select(content, None),
                 _ => return HandleResult::Ignore,
             },
             _ => return HandleResult::Ignore,
@@ -558,20 +631,20 @@ impl<T> ProxideTable<T>
         HandleResult::Update
     }
 
-    fn user_select(&mut self, idx: Option<usize>)
+    fn user_select(&mut self, content: &IndexedVec<T>, idx: Option<usize>)
     {
         match idx {
             None => {
                 self.user_selected = None;
-                if self.items.is_empty() {
+                if content.items.is_empty() {
                     self.state.select(None);
                 } else {
-                    self.state.select(Some(self.items.len() - 1));
+                    self.state.select(Some(content.items.len() - 1));
                 }
             }
             Some(mut idx) => {
-                if idx >= self.items.len() {
-                    idx = self.items.len() - 1;
+                if idx >= content.items.len() {
+                    idx = content.items.len() - 1;
                 }
                 self.user_selected = Some(idx);
                 self.state.select(self.user_selected);
@@ -579,10 +652,10 @@ impl<T> ProxideTable<T>
         }
     }
 
-    fn selected_mut(&mut self) -> Option<&mut T>
+    fn selected_mut<'a>(&self, content: &'a mut IndexedVec<T>) -> Option<&'a mut T>
     {
         if let Some(idx) = self.state.selected() {
-            Some(&mut self.items[idx])
+            Some(&mut content.items[idx])
         } else {
             None
         }
@@ -591,12 +664,18 @@ impl<T> ProxideTable<T>
 
 impl ProxideTable<ConnectionData>
 {
-    pub fn _draw<B: Backend>(&mut self, f: &mut Frame<B>, chunk: Rect, is_active: bool)
+    pub fn _draw<B: Backend>(
+        &mut self,
+        content: &IndexedVec<ConnectionData>,
+        f: &mut Frame<B>,
+        chunk: Rect,
+        is_active: bool,
+    )
     {
         let block = create_block("[C]onnections", is_active);
         let table = Table::new(
             ["Source", "Timestamp", "Status"].iter(),
-            self.items.iter().map(|item| {
+            content.items.iter().map(|item| {
                 Row::Data(
                     vec![
                         item.client_addr.to_string(),
@@ -622,12 +701,18 @@ impl ProxideTable<ConnectionData>
 
 impl ProxideTable<EncodedRequest>
 {
-    pub fn draw<B: Backend>(&mut self, f: &mut Frame<B>, chunk: Rect, is_active: bool)
+    pub fn draw<B: Backend>(
+        &mut self,
+        content: &IndexedVec<EncodedRequest>,
+        f: &mut Frame<B>,
+        chunk: Rect,
+        is_active: bool,
+    )
     {
         let block = create_block("[R]equests", is_active);
         let table = Table::new(
             ["Request", "Timestamp", "St."].iter(),
-            self.items.iter().map(|item| {
+            content.items.iter().map(|item| {
                 Row::Data(
                     vec![
                         format!(
@@ -661,6 +746,7 @@ impl ProxideTable<EncodedRequest>
     }
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct ConnectionData
 {
     pub uuid: Uuid,
@@ -670,17 +756,24 @@ pub struct ConnectionData
     pub status: Status,
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct RequestData
 {
     pub uuid: Uuid,
     pub connection_uuid: Uuid,
+
+    #[serde(with = "http_serde::method")]
     pub method: Method,
+
+    #[serde(with = "http_serde::uri")]
     pub uri: Uri,
+
     pub start_timestamp: DateTime<Local>,
     pub end_timestamp: Option<DateTime<Local>>,
     pub status: Status,
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct EncodedRequest
 {
     request_data: RequestData,
@@ -688,9 +781,12 @@ pub struct EncodedRequest
     response_msg: EncodedMessage,
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct EncodedMessage
 {
     pub data: MessageData,
+
+    #[serde(skip)]
     ui_state: Option<MessageDataUiState>,
 }
 
@@ -717,10 +813,15 @@ impl EncodedMessage
     }
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct MessageData
 {
+    #[serde(with = "http_serde::header_map")]
     pub headers: HeaderMap,
+
+    #[serde(with = "http_serde::header_map")]
     pub trailers: HeaderMap,
+
     pub content: BytesMut,
     pub start_timestamp: Option<DateTime<Local>>,
     pub end_timestamp: Option<DateTime<Local>>,
@@ -792,7 +893,7 @@ impl EncodedMessage
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize)]
 pub enum Status
 {
     InProgress,
@@ -800,7 +901,7 @@ pub enum Status
     Failed,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize)]
 pub enum RequestPart
 {
     Request,

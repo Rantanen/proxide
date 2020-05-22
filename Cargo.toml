@@ -9,7 +9,7 @@ edition = "2018"
 [dependencies]
 h2 = "*"
 http = "*"
-bytes = "*"
+bytes = { version = "*", features = [ "serde" ] }
 log = "*"
 simplelog = "*"
 tokio = { version = "*", features = [ "full", "sync" ] }
@@ -17,9 +17,11 @@ snafu = "*"
 futures = "*"
 tui = { version = "*", default-features = false, features = [ "crossterm" ] }
 crossterm = "*"
-uuid = { version = "*", features = [ "v4" ] }
-chrono = "*"
+uuid = { version = "*", features = [ "v4", "serde" ] }
+chrono = { version = "*", features = ["serde"] }
 pest = "*"
 pest_derive = "*"
 clap = "*"
 protofish = { version = "*" }
+serde = { version = "*", features = ["derive"] }
+http-serde = "*"
