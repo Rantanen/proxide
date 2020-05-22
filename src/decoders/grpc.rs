@@ -221,6 +221,7 @@ impl ToText for protofish::decode::Value
             Self::Bool(v) => Text::raw(format!("{}", v)),
             Self::String(v) => Text::raw(format!("{:?}", v)),
             Self::Bytes(v) => Text::raw(format!("{:?}", v)),
+            Self::Packed(v) => return v.to_text(ctx, indent),
 
             Self::Enum(v) => return v.to_text(ctx, indent),
             Self::Message(v) => return v.to_text(ctx, indent),
@@ -228,5 +229,36 @@ impl ToText for protofish::decode::Value
             Self::Unknown(unk) => Text::raw(format!("!! {:?}", unk)),
             Self::Incomplete(bytes) => Text::raw(format!("Incomplete({:X})", bytes)),
         }]
+    }
+}
+
+impl ToText for protofish::decode::PackedArray
+{
+    fn to_text<'a>(&self, _ctx: &'a Context, _indent: usize) -> Vec<Text<'a>>
+    {
+        let v: Vec<_> = match self {
+            Self::Double(v) => v.iter().map(ToString::to_string).collect(),
+            Self::Float(v) => v.iter().map(ToString::to_string).collect(),
+            Self::Int32(v) => v.iter().map(ToString::to_string).collect(),
+            Self::Int64(v) => v.iter().map(ToString::to_string).collect(),
+            Self::UInt32(v) => v.iter().map(ToString::to_string).collect(),
+            Self::UInt64(v) => v.iter().map(ToString::to_string).collect(),
+            Self::SInt32(v) => v.iter().map(ToString::to_string).collect(),
+            Self::SInt64(v) => v.iter().map(ToString::to_string).collect(),
+            Self::Fixed32(v) => v.iter().map(ToString::to_string).collect(),
+            Self::Fixed64(v) => v.iter().map(ToString::to_string).collect(),
+            Self::SFixed32(v) => v.iter().map(ToString::to_string).collect(),
+            Self::SFixed64(v) => v.iter().map(ToString::to_string).collect(),
+            Self::Bool(v) => v.iter().map(ToString::to_string).collect(),
+        };
+
+        if v.is_empty() {
+            return vec![Text::raw("[]")];
+        }
+
+        let mut output = vec![Text::raw("[ ")];
+        output.push(Text::raw(v.join(", ")));
+        output.push(Text::raw(" ]"));
+        output
     }
 }
