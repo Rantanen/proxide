@@ -169,46 +169,6 @@ impl<T> Default for ProxideTable<T>
     }
 }
 
-impl MessageData
-{
-    pub fn draw<B: Backend>(
-        &self,
-        decoders: &[Box<dyn DecoderFactory>],
-        request: &RequestData,
-        title: &str,
-        f: &mut Frame<B>,
-        chunk: Rect,
-        is_active: bool,
-        offset: u16,
-    )
-    {
-        let duration = match (self.start_timestamp, self.end_timestamp) {
-            (Some(start), Some(end)) => format!(", {}", format_duration(end - start)),
-            _ => String::new(),
-        };
-
-        let request_title = format!("{} ({} bytes{})", title, self.content.len(), duration);
-        let block = create_block(&request_title, is_active);
-
-        let decoders: Vec<Box<dyn Decoder>> = decoders
-            .iter()
-            .map(|d| d.try_create(request, &self))
-            .filter_map(|o| o)
-            .collect();
-
-        let decoder = decoders
-            .last()
-            .expect("Raw decoder should always be present");
-
-        let text = decoder.decode(&self);
-        let request_data = Paragraph::new(text.iter())
-            .block(block)
-            .wrap(false)
-            .scroll(offset);
-        f.render_widget(request_data, chunk);
-    }
-}
-
 impl std::fmt::Display for Status
 {
     fn fmt(&self, w: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error>

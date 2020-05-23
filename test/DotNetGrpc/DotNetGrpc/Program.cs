@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using Google.Protobuf;
 using Grpc.Core;
 using Test;
+using Test.Package;
 
 namespace DotNetGrpc
 {

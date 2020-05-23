@@ -73,6 +73,9 @@
   <ItemGroup>
     <None Include="App.config" />
     <None Include="packages.config" />
+    <Protobuf Include="dependency.proto">
+      <Generator>MSBuild:Compile</Generator>
+    </Protobuf>
     <Protobuf Include="service.proto" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />

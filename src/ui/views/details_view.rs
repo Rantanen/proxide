@@ -2,6 +2,9 @@ use super::prelude::*;
 use tui::widgets::Paragraph;
 use uuid::Uuid;
 
+use super::MessageView;
+use crate::session::RequestPart;
+
 #[derive(Clone, Default)]
 pub struct DetailsView
 {
@@ -91,23 +94,17 @@ impl DetailsView
         let details = Paragraph::new(text.iter());
         f.render_widget(details, details_chunks[0]);
 
-        request.request_msg.draw(
-            &ctx.runtime.decoder_factories,
-            &request.request_data,
-            "Re[q]uest Data",
-            f,
-            req_resp_chunks[0],
-            false,
-            0,
-        );
-        request.response_msg.draw(
-            &ctx.runtime.decoder_factories,
-            &request.request_data,
-            "Re[s]ponse Data",
-            f,
-            req_resp_chunks[1],
-            false,
-            0,
-        );
+        MessageView {
+            request: request.request_data.uuid,
+            part: RequestPart::Request,
+            offset: 0,
+        }
+        .draw(ctx, f, req_resp_chunks[0]);
+        MessageView {
+            request: request.request_data.uuid,
+            part: RequestPart::Response,
+            offset: 0,
+        }
+        .draw(ctx, f, req_resp_chunks[1]);
     }
 }
