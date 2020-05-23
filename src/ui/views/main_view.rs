@@ -1,8 +1,10 @@
 use tui::layout::{Constraint, Direction, Layout, Rect};
+use tui::style::{Modifier, Style};
+use tui::widgets::{Row, Table, TableState};
 
 use super::prelude::*;
 use super::{DetailsView, MessageView};
-use crate::session::{IndexedVec, RequestPart};
+use crate::session::{EncodedRequest, IndexedVec, RequestPart};
 
 #[derive(PartialEq)]
 pub enum Window
@@ -15,14 +17,14 @@ pub enum Window
 pub struct MainView
 {
     details_view: DetailsView,
-    requests_state: ProxideTableState,
+    requests_state: ProxideTable,
     active_window: Window,
 }
 
 #[derive(Default)]
-struct ProxideTableState
+struct ProxideTable
 {
-    tui_state: tui::widgets::TableState,
+    tui_state: TableState,
     user_selected: Option<usize>,
 }
 
@@ -52,9 +54,8 @@ impl<B: Backend> View<B> for MainView
             .split(chunk);
 
         // state.connections.draw(&mut f, chunks[0]);
-        ctx.state.requests.draw(
+        self.requests_state.draw_requests(
             &ctx.data.requests,
-            &mut self.requests_state.tui_state,
             f,
             chunks[0],
             self.active_window == Window::Requests,
@@ -129,7 +130,7 @@ impl MainView
     }
 }
 
-impl ProxideTableState
+impl ProxideTable
 {
     pub fn on_input<B: Backend, T>(
         &mut self,
@@ -186,5 +187,49 @@ impl ProxideTableState
         self.tui_state
             .selected()
             .and_then(|idx| content.items.get(idx))
+    }
+
+    pub fn draw_requests<B: Backend>(
+        &mut self,
+        content: &IndexedVec<EncodedRequest>,
+        f: &mut Frame<B>,
+        chunk: Rect,
+        is_active: bool,
+    )
+    {
+        let block = create_block("[R]equests", is_active);
+        let table = Table::new(
+            ["Request", "Timestamp", "St."].iter(),
+            content.items.iter().map(|item| {
+                Row::Data(
+                    vec![
+                        format!(
+                            "{} {}",
+                            item.request_data.method,
+                            match item.request_data.uri.path_and_query() {
+                                Some(p) => p.to_string(),
+                                None => "/".to_string(),
+                            }
+                        ),
+                        item.request_data
+                            .start_timestamp
+                            .format("%H:%M:%S")
+                            .to_string(),
+                        item.request_data.status.to_string(),
+                    ]
+                    .into_iter(),
+                )
+            }),
+        )
+        .block(block)
+        .widths(&[
+            Constraint::Percentage(100),
+            Constraint::Length(10),
+            Constraint::Length(5),
+        ])
+        .highlight_symbol("> ")
+        .highlight_style(Style::default().modifier(Modifier::BOLD));
+
+        f.render_stateful_widget(table, chunk, &mut self.tui_state)
     }
 }

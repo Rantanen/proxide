@@ -1,10 +1,10 @@
 use crossterm::event::{Event as CTEvent, KeyCode};
 use tui::backend::Backend;
 use tui::buffer::Buffer;
-use tui::layout::{Constraint, Rect};
-use tui::style::{Modifier, Style};
+use tui::layout::Rect;
+use tui::style::Style;
 use tui::terminal::Frame;
-use tui::widgets::{Paragraph, Row, Table, TableState, Widget};
+use tui::widgets::{Paragraph, Widget};
 
 use crate::decoders::{Decoder, DecoderFactory};
 use crate::session::events::SessionEvent;
@@ -33,15 +33,7 @@ pub struct Runtime
 pub struct UiContext
 {
     pub data: Session,
-    pub state: State,
     pub runtime: Runtime,
-}
-
-#[derive(Default)]
-pub struct State
-{
-    pub connections: ProxideTable<ConnectionData>,
-    pub requests: ProxideTable<EncodedRequest>,
     pub size: Rect,
 }
 
@@ -63,13 +55,10 @@ impl<B: Backend> ProxideUi<B>
                     connections: IndexedVec::new(),
                     requests: IndexedVec::new(),
                 },
-                state: State {
-                    size,
-                    ..State::default()
-                },
                 runtime: Runtime {
                     decoder_factories: decoders,
                 },
+                size,
             },
             ui_stack: vec![Box::new(views::MainView::default())],
         }
@@ -94,7 +83,7 @@ impl<B: Backend> ProxideUi<B>
                     }
                 })
                 .unwrap_or(HandleResult::Ignore),
-            UiEvent::Crossterm(e) => return self.on_input(e, self.context.state.size),
+            UiEvent::Crossterm(e) => return self.on_input(e, self.context.size),
         }
     }
 
@@ -116,7 +105,7 @@ impl<B: Backend> ProxideUi<B>
 
         match e {
             CTEvent::Resize(width, height) => {
-                self.context.state.size = Rect {
+                self.context.size = Rect {
                     x: 0,
                     y: 0,
                     width,
@@ -157,7 +146,7 @@ impl<B: Backend> ProxideUi<B>
             width: chunk.width - 2,
             height: 1,
         };
-        let help_text = view.help_text(&self.context, self.context.state.size);
+        let help_text = view.help_text(&self.context, self.context.size);
         let help_line = TextLine(&help_text);
         f.render_widget(help_line, help_chunk);
     }
@@ -175,54 +164,6 @@ impl<T> Default for ProxideTable<T>
         Self {
             phantom: std::marker::PhantomData::<T>,
         }
-    }
-}
-
-impl ProxideTable<EncodedRequest>
-{
-    pub fn draw<B: Backend>(
-        &self,
-        content: &IndexedVec<EncodedRequest>,
-        state: &mut TableState,
-        f: &mut Frame<B>,
-        chunk: Rect,
-        is_active: bool,
-    )
-    {
-        let block = create_block("[R]equests", is_active);
-        let table = Table::new(
-            ["Request", "Timestamp", "St."].iter(),
-            content.items.iter().map(|item| {
-                Row::Data(
-                    vec![
-                        format!(
-                            "{} {}",
-                            item.request_data.method,
-                            match item.request_data.uri.path_and_query() {
-                                Some(p) => p.to_string(),
-                                None => "/".to_string(),
-                            }
-                        ),
-                        item.request_data
-                            .start_timestamp
-                            .format("%H:%M:%S")
-                            .to_string(),
-                        item.request_data.status.to_string(),
-                    ]
-                    .into_iter(),
-                )
-            }),
-        )
-        .block(block)
-        .widths(&[
-            Constraint::Percentage(100),
-            Constraint::Length(10),
-            Constraint::Length(5),
-        ])
-        .highlight_symbol("> ")
-        .highlight_style(Style::default().modifier(Modifier::BOLD));
-
-        f.render_stateful_widget(table, chunk, state)
     }
 }
 
