@@ -87,7 +87,10 @@ pub fn show_message<T: ToString>(text: T)
 
 pub fn show_error<T: ToString>(text: T)
 {
-    show_toast(text.to_string(), true);
+    // We'll want to log the errors into the log as well.
+    let string = text.to_string();
+    log::error!("{}", string);
+    show_toast(string, true);
 }
 
 fn show_toast(text: String, error: bool)
@@ -135,7 +138,7 @@ fn ensure_running()
                             events.push(new_event);
                             next_timeout = events.peek().unwrap().instant - Instant::now();
                         }
-                        Err(timeout) => {
+                        Err(_) => {
                             // Timeout happened. Pop the next event and send it.
                             let next_event = events.pop().unwrap();
                             sender

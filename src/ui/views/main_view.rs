@@ -1,12 +1,10 @@
 use chrono::prelude::*;
 use serde::Serialize;
 use tui::layout::{Constraint, Direction, Layout, Rect};
-use tui::style::{Modifier, Style};
-use tui::widgets::{Row, Table, TableState};
 
 use super::prelude::*;
 use super::{DetailsView, MessageView};
-use crate::session::{EncodedRequest, IndexedVec, RequestPart};
+use crate::session::{EncodedRequest, RequestPart};
 
 use crate::ui::controls::TableView;
 use crate::ui::toast;

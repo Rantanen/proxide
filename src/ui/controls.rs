@@ -4,7 +4,7 @@ use tui::style::{Modifier, Style};
 use tui::widgets::{Row, Table, TableState};
 
 use super::prelude::*;
-use crate::session::{EncodedRequest, IndexedVec};
+use crate::session::IndexedVec;
 
 pub struct TableView<T>
 {

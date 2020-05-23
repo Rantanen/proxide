@@ -54,6 +54,8 @@ impl ProxyConnection
         ui: Sender<SessionEvent>,
     ) -> Result<ProxyConnection>
     {
+        // This is a debugging proxy so we don't need to be supporting hundreds of concurrent
+        // requests. We can opt for a bit larger window size to avoid slowing down the connection.
         let client_connection = server::Builder::new()
             .initial_window_size(1_000_000)
             .handshake(client)
@@ -66,10 +68,16 @@ impl ProxyConnection
                 scenario: "server handshake",
             })?;
 
-        tokio::spawn(async move {
-            match server_connection.await {
-                Ok(..) => {}
-                Err(e) => error!("Error: {:?}", e),
+        // The connection futures are responsible for driving the network communication.
+        // Spawn them into a new task to take care of that.
+        let uuid = Uuid::new_v4();
+        tokio::spawn({
+            let uuid = uuid;
+            async move {
+                match server_connection.await {
+                    Ok(..) => {}
+                    Err(e) => error!("Server connection failed for connection {}\n{}", uuid, e),
+                }
             }
         });
 
@@ -78,7 +86,7 @@ impl ProxyConnection
         })?;
 
         let conn = ProxyConnection {
-            uuid: Uuid::new_v4(),
+            uuid,
             client_connection,
             server_stream,
         };
@@ -94,14 +102,18 @@ impl ProxyConnection
 
     pub async fn run(&mut self, ui: Sender<SessionEvent>) -> Result<()>
     {
+        // We'll wrap all of this into an `async` block to act as a try/catch for handling errors
+        // at the end of the function.
         let r = {
             let ui = ui.clone();
             let client_connection = &mut self.client_connection;
             let server_stream = &mut self.server_stream;
             let uuid = self.uuid;
             async move {
+                // The client_connection will produce individual HTTP request that we'll accept.
+                // These requests will be handled in parallel by spawning them into their own
+                // tasks.
                 while let Some(request) = client_connection.accept().await {
-                    // Process the client request.
                     let (client_request, client_response) = request.context(ClientError {
                         scenario: "processing request",
                     })?;
@@ -119,7 +131,7 @@ impl ProxyConnection
                         let ui = ui;
                         match request.execute(ui).await {
                             Ok(_) => {}
-                            Err(e) => error!("{}", e),
+                            Err(e) => error!("Request error for request {}\n{}", uuid, e),
                         }
                     });
                 }
@@ -129,6 +141,9 @@ impl ProxyConnection
         }
         .await;
 
+        // Once the ´while client_connection.accept()` loop ends, the connection will close (or
+        // alternatively an error happened and we'll terminate it). The final status value depends
+        // on whether there was an error or not.
         ui.send(SessionEvent::ConnectionClosed {
             uuid: self.uuid,
             status: match r {
@@ -178,10 +193,10 @@ impl ProxyRequest
 
         // Set up a server request.
         let (server_response, server_request) = server_stream
-            .send_request(server_request, false)
+            .send_request(server_request, client_request.is_end_stream())
             .context(ServerError {
-            scenario: "sending request",
-        })?;
+                scenario: "sending request",
+            })?;
 
         Ok(ProxyRequest {
             uuid,
@@ -199,29 +214,37 @@ impl ProxyRequest
         // are set up in their own futures to allow parallel request/response streaming to occur.
 
         // Set up streaming the request to the server.
+        //
+        // The client request might have ended already if the client didn't need to stream a
+        // request body. We'll set up the future here anyway just to keep things consistent and
+        // easier to manage without having to special case the is_end_stream somewhere else.
         let uuid = self.uuid;
         let client_request = self.client_request;
         let mut server_request = self.server_request;
         let ui_temp = ui.clone();
         let request_future = async move {
-            let ui = ui_temp;
-            let trailers = pipe_stream(
-                client_request,
-                &mut server_request,
-                ui,
-                uuid,
-                RequestPart::Request,
-            )
-            .await?;
+            if client_request.is_end_stream() {
+                Ok(None)
+            } else {
+                let ui = ui_temp;
+                let trailers = pipe_stream(
+                    client_request,
+                    &mut server_request,
+                    ui,
+                    uuid,
+                    RequestPart::Request,
+                )
+                .await?;
 
-            if let Some(trailers) = trailers.clone() {
-                server_request
-                    .send_trailers(trailers)
-                    .context(ServerError {
-                        scenario: "sending trailers",
-                    })?;
+                if let Some(trailers) = trailers.clone() {
+                    server_request
+                        .send_trailers(trailers)
+                        .context(ServerError {
+                            scenario: "sending trailers",
+                        })?;
+                }
+                Ok(trailers)
             }
-            Ok(trailers)
         }
         .then({
             let ui = ui.clone();
@@ -262,7 +285,11 @@ impl ProxyRequest
                     scenario: "sending response",
                 })?;
 
-            if !response_body.is_end_stream() {
+            // The server might have sent all the details in the headers, at which point there is
+            // no body present. Check for this scenario here.
+            if response_body.is_end_stream() {
+                Ok(None)
+            } else {
                 log::info!("{}: Server stream starting", uuid);
                 let trailers = pipe_stream(
                     response_body,
@@ -281,8 +308,6 @@ impl ProxyRequest
                 }
 
                 Ok(trailers)
-            } else {
-                Ok(None)
             }
         }
         .then({
@@ -295,7 +320,7 @@ impl ProxyRequest
         let r = r1.and(r2);
         ui.send(SessionEvent::RequestDone(RequestDoneEvent {
             uuid: self.uuid,
-            status: match fatal_error(&r) {
+            status: match is_fatal_error(&r) {
                 true => Status::Failed,
                 false => Status::Succeeded,
             },
@@ -374,7 +399,7 @@ async fn notify_message_done(
     Ok(())
 }
 
-fn fatal_error<S>(r: &Result<S, Error>) -> bool
+fn is_fatal_error<S>(r: &Result<S, Error>) -> bool
 {
     match r {
         Ok(_) => false,

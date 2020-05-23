@@ -16,7 +16,7 @@ use crate::session::events::SessionEvent;
 mod controls;
 pub mod prelude;
 mod state;
-mod toast;
+pub mod toast;
 mod views;
 
 use state::{HandleResult, ProxideUi, UiEvent};
