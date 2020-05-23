@@ -1,6 +1,8 @@
 # Proxide
 ### HTTP2/gRPC Debugging Proxy
 
+[![crates.io](https://img.shields.io/crates/v/proxide.svg)](https://crates.io/crates/proxide)
+
 ![Demo](images/proxide.gif)
 
 ## Installation
@@ -11,8 +13,9 @@ cargo install proxide
 
 ## Usage
 
-Run proxide listening on port `1234`, bridging connections to port `8888` and
-using `my.proto` gRPC description to decode the traffic.
+Run proxide listening on port `1234`, bridging connections to `localhost:8888`
+and using `my.proto`, `dependent.proto` and `third.proto` gRPC descriptions to
+decode the traffic.
 
 ```
 proxide monitor -l 1234 -t localhost:8888 --grpc my.proto dependent.proto third.proto
