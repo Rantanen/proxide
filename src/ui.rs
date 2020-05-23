@@ -54,8 +54,6 @@ pub fn main(
 
     let mut state = ProxideUi::new(session, decoders, terminal.size().unwrap());
 
-    terminal.draw(|f| state.draw(f)).unwrap();
-
     let (ui_tx, ui_rx) = std::sync::mpsc::channel();
 
     let crossterm_tx = ui_tx.clone();
@@ -77,6 +75,8 @@ pub fn main(
         }
     });
 
+    // Ensure the UI is drawn at least once even if no events come in.
+    terminal.draw(|f| state.draw(f)).unwrap();
     loop {
         let e = ui_rx.recv().unwrap();
         match state.handle(e) {
