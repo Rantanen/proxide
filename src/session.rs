@@ -153,6 +153,12 @@ impl<T> IndexedVec<T>
         self.items.push(item);
     }
 
+    pub fn get_by_uuid(&self, uuid: Uuid) -> Option<&T>
+    {
+        let idx = self.items_by_uuid.get(&uuid)?;
+        self.items.get(*idx)
+    }
+
     pub fn get_mut_by_uuid(&mut self, uuid: Uuid) -> Option<&mut T>
     {
         let idx = self.items_by_uuid.get(&uuid)?;

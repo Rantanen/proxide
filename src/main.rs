@@ -11,7 +11,6 @@ mod decoders;
 mod error;
 mod session;
 mod ui;
-mod ui_state;
 
 use connection::ProxyConnection;
 
@@ -99,7 +98,6 @@ pub async fn main() -> Result<(), Error>
     let target_port = matches.value_of("target").unwrap().to_string();
 
     let h: std::thread::JoinHandle<Result<(), Error>> = std::thread::spawn({
-        let ui_tx = ui_tx.clone();
         move || {
             let mut decoders = vec![];
             decoders.push(decoders::raw::initialize(&matches).context(DecoderError {})?);

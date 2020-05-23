@@ -1,4 +1,3 @@
-
 #[derive(Debug)]
 pub enum UiEvent
 {
@@ -27,4 +26,3 @@ pub enum UiEvent
         uuid: Uuid, data: bytes::Bytes
     },
 }
-

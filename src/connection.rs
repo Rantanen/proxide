@@ -16,7 +16,6 @@ use uuid::Uuid;
 
 use crate::session::events::*;
 use crate::session::*;
-use crate::ui_state::*;
 
 #[derive(Debug, Snafu)]
 #[snafu(visibility(pub(crate)))]

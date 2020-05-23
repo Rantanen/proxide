@@ -74,9 +74,27 @@ pub struct RequestDoneEvent
     pub timestamp: DateTime<Local>,
 }
 
+pub enum SessionChange
+{
+    Connections,
+    Connection
+    {
+        uuid: Uuid,
+    },
+    Request
+    {
+        uuid: Uuid,
+    },
+    Message
+    {
+        request_uuid: Uuid,
+        part: RequestPart,
+    },
+}
+
 impl Session
 {
-    pub fn handle(&mut self, e: SessionEvent)
+    pub fn handle(&mut self, e: SessionEvent) -> Option<SessionChange>
     {
         match e {
             SessionEvent::NewConnection(e) => self.on_new_connection(e),
@@ -85,11 +103,11 @@ impl Session
             SessionEvent::MessageData(e) => self.on_message_data(e),
             SessionEvent::MessageDone(e) => self.on_message_done(e),
             SessionEvent::RequestDone(e) => self.on_request_done(e),
-            SessionEvent::ConnectionClosed { .. } => {}
+            SessionEvent::ConnectionClosed { .. } => None,
         }
     }
 
-    fn on_new_connection(&mut self, e: NewConnectionEvent)
+    fn on_new_connection(&mut self, e: NewConnectionEvent) -> Option<SessionChange>
     {
         let data = ConnectionData {
             uuid: e.uuid,
@@ -99,9 +117,10 @@ impl Session
             status: Status::InProgress,
         };
         self.connections.push(e.uuid, data);
+        Some(SessionChange::Connections)
     }
 
-    fn on_new_request(&mut self, e: NewRequestEvent)
+    fn on_new_request(&mut self, e: NewRequestEvent) -> Option<SessionChange>
     {
         self.requests.push(
             e.uuid,
@@ -121,18 +140,27 @@ impl Session
                 response_msg: EncodedMessage::new(RequestPart::Response),
             },
         );
+        Some(SessionChange::Connection {
+            uuid: e.connection_uuid,
+        })
     }
 
-    fn on_new_response(&mut self, e: NewResponseEvent)
+    fn on_new_response(&mut self, e: NewResponseEvent) -> Option<SessionChange>
     {
         let request = self.requests.get_mut_by_uuid(e.uuid);
         if let Some(request) = request {
             request.response_msg.data.headers = e.headers;
             request.response_msg.data.start_timestamp = Some(e.timestamp);
+            Some(SessionChange::Message {
+                request_uuid: e.uuid,
+                part: RequestPart::Response,
+            })
+        } else {
+            None
         }
     }
 
-    fn on_message_data(&mut self, e: MessageDataEvent)
+    fn on_message_data(&mut self, e: MessageDataEvent) -> Option<SessionChange>
     {
         let request = self.requests.get_mut_by_uuid(e.uuid);
         if let Some(request) = request {
@@ -141,10 +169,16 @@ impl Session
                 RequestPart::Response => &mut request.response_msg,
             };
             part_msg.data.content.extend(e.data);
+            Some(SessionChange::Message {
+                request_uuid: e.uuid,
+                part: e.part,
+            })
+        } else {
+            None
         }
     }
 
-    fn on_message_done(&mut self, e: MessageDoneEvent)
+    fn on_message_done(&mut self, e: MessageDoneEvent) -> Option<SessionChange>
     {
         let request = self.requests.get_mut_by_uuid(e.uuid);
         if let Some(request) = request {
@@ -153,15 +187,24 @@ impl Session
                 RequestPart::Response => &mut request.response_msg,
             };
             part_msg.data.end_timestamp = Some(e.timestamp);
+            Some(SessionChange::Message {
+                request_uuid: e.uuid,
+                part: e.part,
+            })
+        } else {
+            None
         }
     }
 
-    fn on_request_done(&mut self, e: RequestDoneEvent)
+    fn on_request_done(&mut self, e: RequestDoneEvent) -> Option<SessionChange>
     {
         let request = self.requests.get_mut_by_uuid(e.uuid);
         if let Some(request) = request {
             request.request_data.end_timestamp = Some(e.timestamp);
             request.request_data.status = e.status;
+            Some(SessionChange::Request { uuid: e.uuid })
+        } else {
+            None
         }
     }
 }

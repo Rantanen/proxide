@@ -13,7 +13,12 @@ use tui::{backend::CrosstermBackend, Terminal};
 
 use crate::decoders::DecoderFactory;
 use crate::session::events::SessionEvent;
-use crate::ui_state::{HandleResult, ProxideUi, UiEvent};
+
+pub mod prelude;
+mod state;
+mod views;
+
+use state::{HandleResult, ProxideUi, UiEvent};
 
 #[derive(Debug, Snafu)]
 #[snafu(visibility(pub(crate)))]
