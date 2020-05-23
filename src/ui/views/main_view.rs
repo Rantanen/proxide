@@ -8,6 +8,8 @@ use super::prelude::*;
 use super::{DetailsView, MessageView};
 use crate::session::{EncodedRequest, IndexedVec, RequestPart};
 
+use crate::ui::controls::TableView;
+
 #[derive(PartialEq)]
 pub enum Window
 {
@@ -15,19 +17,11 @@ pub enum Window
     Details,
 }
 
-#[derive(Default)]
 pub struct MainView
 {
     details_view: DetailsView,
-    requests_state: ProxideTable,
+    requests_state: TableView<EncodedRequest>,
     active_window: Window,
-}
-
-#[derive(Default)]
-struct ProxideTable
-{
-    tui_state: TableState,
-    user_selected: Option<usize>,
 }
 
 impl Default for Window
@@ -35,6 +29,38 @@ impl Default for Window
     fn default() -> Self
     {
         Self::Requests
+    }
+}
+
+impl Default for MainView
+{
+    fn default() -> Self
+    {
+        Self {
+            details_view: DetailsView::default(),
+            requests_state: TableView::<EncodedRequest>::new("[R]equests")
+                .with_column("Requests", Constraint::Percentage(100), |item| {
+                    format!(
+                        "{} {}",
+                        item.request_data.method,
+                        item.request_data
+                            .uri
+                            .path_and_query()
+                            .map(ToString::to_string)
+                            .unwrap_or_else(|| "/".to_string())
+                    )
+                })
+                .with_column("Timestamp", Constraint::Length(10), |item| {
+                    item.request_data
+                        .start_timestamp
+                        .format("%H:%M:%S")
+                        .to_string()
+                })
+                .with_column("St.", Constraint::Length(5), |item| {
+                    item.request_data.status.to_string()
+                }),
+            active_window: Window::Requests,
+        }
     }
 }
 
@@ -80,7 +106,7 @@ impl<B: Backend> View<B> for MainView
         let handled = match self.active_window {
             Window::Requests => self
                 .requests_state
-                .on_input::<B, _>(&ctx.data.requests, e, size),
+                .on_input::<B>(&ctx.data.requests, e, size),
             Window::Details => HandleResult::Ignore,
         };
 
@@ -113,11 +139,8 @@ impl<B: Backend> View<B> for MainView
         match change {
             SessionChange::NewConnection { .. } => false,
             SessionChange::NewRequest { .. } => {
-                if self.requests_state.user_selected.is_none() {
-                    self.requests_state
-                        .tui_state
-                        .select(Some(ctx.data.requests.items.len() - 1));
-                }
+                self.requests_state
+                    .auto_select(&ctx.data.requests, Some(usize::MAX));
                 true
             }
             SessionChange::Request { .. } => true,
@@ -157,109 +180,5 @@ impl MainView
                 }))
             })
             .unwrap_or(HandleResult::Ignore)
-    }
-}
-
-impl ProxideTable
-{
-    pub fn on_input<B: Backend, T>(
-        &mut self,
-        content: &IndexedVec<T>,
-        e: CTEvent,
-        _size: Rect,
-    ) -> HandleResult<B>
-    {
-        match e {
-            CTEvent::Key(key) => match key.code {
-                KeyCode::Char('k') | KeyCode::Up => self.user_select(
-                    content,
-                    self.user_selected
-                        .or_else(|| self.tui_state.selected())
-                        .map(|i| i.saturating_sub(1)),
-                ),
-                KeyCode::Char('j') | KeyCode::Down => self.user_select(
-                    content,
-                    self.user_selected
-                        .or_else(|| self.tui_state.selected())
-                        .map(|i| i + 1),
-                ),
-                KeyCode::Esc => self.user_select(content, None),
-                _ => return HandleResult::Ignore,
-            },
-            _ => return HandleResult::Ignore,
-        };
-        HandleResult::Update
-    }
-
-    pub fn user_select<T>(&mut self, content: &IndexedVec<T>, idx: Option<usize>)
-    {
-        match idx {
-            None => {
-                self.user_selected = None;
-                if content.items.is_empty() {
-                    self.tui_state.select(None);
-                } else {
-                    self.tui_state.select(Some(content.items.len() - 1));
-                }
-            }
-            Some(mut idx) => {
-                if idx >= content.items.len() {
-                    idx = content.items.len() - 1;
-                }
-                self.user_selected = Some(idx);
-                self.tui_state.select(self.user_selected);
-            }
-        }
-    }
-
-    pub fn selected<'a, T>(&self, content: &'a IndexedVec<T>) -> Option<&'a T>
-    {
-        self.tui_state
-            .selected()
-            .and_then(|idx| content.items.get(idx))
-    }
-
-    pub fn draw_requests<B: Backend>(
-        &mut self,
-        content: &IndexedVec<EncodedRequest>,
-        f: &mut Frame<B>,
-        chunk: Rect,
-        is_active: bool,
-    )
-    {
-        let block = create_block("[R]equests", is_active);
-        let table = Table::new(
-            ["Request", "Timestamp", "St."].iter(),
-            content.items.iter().map(|item| {
-                Row::Data(
-                    vec![
-                        format!(
-                            "{} {}",
-                            item.request_data.method,
-                            match item.request_data.uri.path_and_query() {
-                                Some(p) => p.to_string(),
-                                None => "/".to_string(),
-                            }
-                        ),
-                        item.request_data
-                            .start_timestamp
-                            .format("%H:%M:%S")
-                            .to_string(),
-                        item.request_data.status.to_string(),
-                    ]
-                    .into_iter(),
-                )
-            }),
-        )
-        .block(block)
-        .widths(&[
-            Constraint::Percentage(100),
-            Constraint::Length(10),
-            Constraint::Length(5),
-        ])
-        .highlight_symbol("> ")
-        .highlight_style(Style::default().modifier(Modifier::BOLD));
-
-        f.render_stateful_widget(table, chunk, &mut self.tui_state)
     }
 }

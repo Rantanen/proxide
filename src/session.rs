@@ -145,3 +145,13 @@ impl<T> Default for IndexedVec<T>
         }
     }
 }
+
+impl<T> std::ops::Deref for IndexedVec<T>
+{
+    type Target = Vec<T>;
+
+    fn deref(&self) -> &Self::Target
+    {
+        &self.items
+    }
+}

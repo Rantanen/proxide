@@ -13,6 +13,7 @@ use tui::{backend::CrosstermBackend, Terminal};
 use crate::decoders::DecoderFactory;
 use crate::session::events::SessionEvent;
 
+mod controls;
 pub mod prelude;
 mod state;
 mod views;
