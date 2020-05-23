@@ -1,4 +1,3 @@
-use crate::decoders::Decoder;
 use bytes::BytesMut;
 use chrono::prelude::*;
 use http::{HeaderMap, Method, Uri};

@@ -37,11 +37,6 @@ impl<B: Backend> View<B> for DetailsView
 
 impl DetailsView
 {
-    pub fn show(&mut self, request: Uuid)
-    {
-        self.request = request;
-    }
-
     pub fn draw_control<B: Backend>(
         &mut self,
         request: Uuid,

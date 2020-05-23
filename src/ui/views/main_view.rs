@@ -106,7 +106,7 @@ impl<B: Backend> View<B> for MainView
     {
         match change {
             SessionChange::NewConnection { .. } => false,
-            SessionChange::NewRequest { request, .. } => {
+            SessionChange::NewRequest { .. } => {
                 if self.requests_state.user_selected.is_none() {
                     self.requests_state
                         .tui_state
