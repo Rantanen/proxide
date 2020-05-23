@@ -718,8 +718,6 @@ dependencies = [
  "http",
  "http-serde",
  "log",
- "pest",
- "pest_derive",
  "protofish",
  "rmp-serde",
  "serde",
