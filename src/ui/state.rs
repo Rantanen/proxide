@@ -67,22 +67,24 @@ impl<B: Backend> ProxideUi<B>
     pub fn handle(&mut self, e: UiEvent) -> HandleResult<B>
     {
         match e {
-            UiEvent::SessionEvent(e) => self
-                .context
-                .data
-                .handle(e)
-                .map(|change| {
-                    match self
-                        .ui_stack
-                        .last_mut()
-                        .unwrap()
-                        .on_change(&mut self.context, &change)
-                    {
-                        true => HandleResult::Update,
-                        false => HandleResult::Ignore,
-                    }
-                })
-                .unwrap_or(HandleResult::Ignore),
+            UiEvent::SessionEvent(e) => {
+                let results: Vec<_> = self
+                    .context
+                    .data
+                    .handle(e)
+                    .into_iter()
+                    .map(|change| {
+                        self.ui_stack
+                            .last_mut()
+                            .unwrap()
+                            .on_change(&mut self.context, &change)
+                    })
+                    .collect();
+                match results.into_iter().any(|b| b) {
+                    true => HandleResult::Update,
+                    false => HandleResult::Ignore,
+                }
+            }
             UiEvent::Crossterm(e) => return self.on_input(e, self.context.size),
         }
     }
@@ -167,7 +169,7 @@ impl<T> Default for ProxideTable<T>
     }
 }
 
-impl EncodedMessage
+impl MessageData
 {
     pub fn draw<B: Backend>(
         &self,
@@ -180,26 +182,25 @@ impl EncodedMessage
         offset: u16,
     )
     {
-        let duration = match (self.data.start_timestamp, self.data.end_timestamp) {
+        let duration = match (self.start_timestamp, self.end_timestamp) {
             (Some(start), Some(end)) => format!(", {}", format_duration(end - start)),
             _ => String::new(),
         };
 
-        let request_title = format!("{} ({} bytes{})", title, self.data.content.len(), duration);
+        let request_title = format!("{} ({} bytes{})", title, self.content.len(), duration);
         let block = create_block(&request_title, is_active);
 
         let decoders: Vec<Box<dyn Decoder>> = decoders
             .iter()
-            .map(|d| d.try_create(request, &self.data))
+            .map(|d| d.try_create(request, &self))
             .filter_map(|o| o)
             .collect();
 
-        let ui_state = EncodedMessageUiState {
-            active_decoder: decoders.len() - 1,
-            decoders,
-        };
+        let decoder = decoders
+            .last()
+            .expect("Raw decoder should always be present");
 
-        let text = ui_state.decoders[ui_state.active_decoder].decode(&self.data);
+        let text = decoder.decode(&self);
         let request_data = Paragraph::new(text.iter())
             .block(block)
             .wrap(false)

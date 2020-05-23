@@ -61,7 +61,15 @@ impl<B: Backend> View<B> for MainView
             self.active_window == Window::Requests,
         );
 
-        self.details_view.draw(ctx, f, chunks[1]);
+        if let Some(request) = self.requests_state.selected(&ctx.data.requests) {
+            self.details_view.draw_control(
+                request.request_data.uuid,
+                ctx,
+                f,
+                chunks[1],
+                self.active_window == Window::Details,
+            );
+        }
     }
 
     fn on_input(&mut self, ctx: &UiContext, e: CTEvent, size: Rect) -> HandleResult<B>
@@ -94,14 +102,21 @@ impl<B: Backend> View<B> for MainView
         HandleResult::Update
     }
 
-    fn on_change(&self, ctx: &UiContext, change: &SessionChange) -> bool
+    fn on_change(&mut self, ctx: &UiContext, change: &SessionChange) -> bool
     {
         match change {
-            SessionChange::Connections => false,
-            SessionChange::Connection { .. } => true,
+            SessionChange::NewConnection { .. } => false,
+            SessionChange::NewRequest { request, .. } => {
+                if self.requests_state.user_selected.is_none() {
+                    self.requests_state
+                        .tui_state
+                        .select(Some(ctx.data.requests.items.len() - 1));
+                }
+                true
+            }
             SessionChange::Request { .. } => true,
-            msg @ SessionChange::Message { .. } => {
-                <dyn View<B>>::on_change(&self.details_view, ctx, msg)
+            msg @ SessionChange::NewMessage { .. } | msg @ SessionChange::Message { .. } => {
+                <dyn View<B>>::on_change(&mut self.details_view, ctx, msg)
             }
         }
     }

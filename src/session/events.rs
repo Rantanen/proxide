@@ -76,25 +76,31 @@ pub struct RequestDoneEvent
 
 pub enum SessionChange
 {
-    Connections,
-    Connection
+    NewConnection
     {
-        uuid: Uuid,
+        connection: Uuid
+    },
+    NewRequest
+    {
+        connection: Uuid, request: Uuid
     },
     Request
     {
-        uuid: Uuid,
+        request: Uuid
+    },
+    NewMessage
+    {
+        request: Uuid, part: RequestPart
     },
     Message
     {
-        request_uuid: Uuid,
-        part: RequestPart,
+        request: Uuid, part: RequestPart
     },
 }
 
 impl Session
 {
-    pub fn handle(&mut self, e: SessionEvent) -> Option<SessionChange>
+    pub fn handle(&mut self, e: SessionEvent) -> Vec<SessionChange>
     {
         match e {
             SessionEvent::NewConnection(e) => self.on_new_connection(e),
@@ -103,11 +109,11 @@ impl Session
             SessionEvent::MessageData(e) => self.on_message_data(e),
             SessionEvent::MessageDone(e) => self.on_message_done(e),
             SessionEvent::RequestDone(e) => self.on_request_done(e),
-            SessionEvent::ConnectionClosed { .. } => None,
+            SessionEvent::ConnectionClosed { .. } => vec![],
         }
     }
 
-    fn on_new_connection(&mut self, e: NewConnectionEvent) -> Option<SessionChange>
+    fn on_new_connection(&mut self, e: NewConnectionEvent) -> Vec<SessionChange>
     {
         let data = ConnectionData {
             uuid: e.uuid,
@@ -117,10 +123,10 @@ impl Session
             status: Status::InProgress,
         };
         self.connections.push(e.uuid, data);
-        Some(SessionChange::Connections)
+        vec![SessionChange::NewConnection { connection: e.uuid }]
     }
 
-    fn on_new_request(&mut self, e: NewRequestEvent) -> Option<SessionChange>
+    fn on_new_request(&mut self, e: NewRequestEvent) -> Vec<SessionChange>
     {
         self.requests.push(
             e.uuid,
@@ -134,33 +140,40 @@ impl Session
                     start_timestamp: e.timestamp,
                     end_timestamp: None,
                 },
-                request_msg: EncodedMessage::new(RequestPart::Request)
+                request_msg: MessageData::new(RequestPart::Request)
                     .with_headers(e.headers)
                     .with_start_timestamp(e.timestamp),
-                response_msg: EncodedMessage::new(RequestPart::Response),
+                response_msg: MessageData::new(RequestPart::Response),
             },
         );
-        Some(SessionChange::Connection {
-            uuid: e.connection_uuid,
-        })
+        vec![
+            SessionChange::NewRequest {
+                connection: e.connection_uuid,
+                request: e.uuid,
+            },
+            SessionChange::NewMessage {
+                request: e.uuid,
+                part: RequestPart::Request,
+            },
+        ]
     }
 
-    fn on_new_response(&mut self, e: NewResponseEvent) -> Option<SessionChange>
+    fn on_new_response(&mut self, e: NewResponseEvent) -> Vec<SessionChange>
     {
         let request = self.requests.get_mut_by_uuid(e.uuid);
         if let Some(request) = request {
-            request.response_msg.data.headers = e.headers;
-            request.response_msg.data.start_timestamp = Some(e.timestamp);
-            Some(SessionChange::Message {
-                request_uuid: e.uuid,
+            request.response_msg.headers = e.headers;
+            request.response_msg.start_timestamp = Some(e.timestamp);
+            vec![SessionChange::NewMessage {
+                request: e.uuid,
                 part: RequestPart::Response,
-            })
+            }]
         } else {
-            None
+            vec![]
         }
     }
 
-    fn on_message_data(&mut self, e: MessageDataEvent) -> Option<SessionChange>
+    fn on_message_data(&mut self, e: MessageDataEvent) -> Vec<SessionChange>
     {
         let request = self.requests.get_mut_by_uuid(e.uuid);
         if let Some(request) = request {
@@ -168,17 +181,17 @@ impl Session
                 RequestPart::Request => &mut request.request_msg,
                 RequestPart::Response => &mut request.response_msg,
             };
-            part_msg.data.content.extend(e.data);
-            Some(SessionChange::Message {
-                request_uuid: e.uuid,
+            part_msg.content.extend(e.data);
+            vec![SessionChange::Message {
+                request: e.uuid,
                 part: e.part,
-            })
+            }]
         } else {
-            None
+            vec![]
         }
     }
 
-    fn on_message_done(&mut self, e: MessageDoneEvent) -> Option<SessionChange>
+    fn on_message_done(&mut self, e: MessageDoneEvent) -> Vec<SessionChange>
     {
         let request = self.requests.get_mut_by_uuid(e.uuid);
         if let Some(request) = request {
@@ -186,25 +199,25 @@ impl Session
                 RequestPart::Request => &mut request.request_msg,
                 RequestPart::Response => &mut request.response_msg,
             };
-            part_msg.data.end_timestamp = Some(e.timestamp);
-            Some(SessionChange::Message {
-                request_uuid: e.uuid,
+            part_msg.end_timestamp = Some(e.timestamp);
+            vec![SessionChange::Message {
+                request: e.uuid,
                 part: e.part,
-            })
+            }]
         } else {
-            None
+            vec![]
         }
     }
 
-    fn on_request_done(&mut self, e: RequestDoneEvent) -> Option<SessionChange>
+    fn on_request_done(&mut self, e: RequestDoneEvent) -> Vec<SessionChange>
     {
         let request = self.requests.get_mut_by_uuid(e.uuid);
         if let Some(request) = request {
             request.request_data.end_timestamp = Some(e.timestamp);
             request.request_data.status = e.status;
-            Some(SessionChange::Request { uuid: e.uuid })
+            vec![SessionChange::Request { request: e.uuid }]
         } else {
-            None
+            vec![]
         }
     }
 }

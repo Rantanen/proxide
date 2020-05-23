@@ -11,7 +11,7 @@ impl<B: Backend> View<B> for DetailsView
 {
     fn draw(&mut self, ctx: &UiContext, f: &mut Frame<B>, chunk: Rect)
     {
-        self.draw_control(ctx, f, chunk, false)
+        self.draw_control(self.request, ctx, f, chunk, false)
     }
 
     fn on_input(&mut self, _session: &UiContext, _e: CTEvent, _size: Rect) -> HandleResult<B>
@@ -19,15 +19,13 @@ impl<B: Backend> View<B> for DetailsView
         HandleResult::Ignore
     }
 
-    fn on_change(&self, _ctx: &UiContext, state_changed: &SessionChange) -> bool
+    fn on_change(&mut self, _ctx: &UiContext, state_changed: &SessionChange) -> bool
     {
         match state_changed {
-            SessionChange::Connections => false,
-            SessionChange::Connection { .. } => false,
-            SessionChange::Request { uuid }
-            | SessionChange::Message {
-                request_uuid: uuid, ..
-            } => *uuid == self.request,
+            SessionChange::NewConnection { .. } | SessionChange::NewRequest { .. } => false,
+            SessionChange::Request { request }
+            | SessionChange::NewMessage { request, .. }
+            | SessionChange::Message { request, .. } => *request == self.request,
         }
     }
 
@@ -39,15 +37,21 @@ impl<B: Backend> View<B> for DetailsView
 
 impl DetailsView
 {
+    pub fn show(&mut self, request: Uuid)
+    {
+        self.request = request;
+    }
+
     pub fn draw_control<B: Backend>(
         &mut self,
+        request: Uuid,
         ctx: &UiContext,
         f: &mut Frame<B>,
         chunk: Rect,
         is_active: bool,
     )
     {
-        let request = match ctx.data.requests.get_by_uuid(self.request) {
+        let request = match ctx.data.requests.get_by_uuid(request) {
             Some(r) => r,
             None => return,
         };

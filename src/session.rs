@@ -54,14 +54,8 @@ pub struct RequestData
 pub struct EncodedRequest
 {
     pub request_data: RequestData,
-    pub request_msg: EncodedMessage,
-    pub response_msg: EncodedMessage,
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct EncodedMessage
-{
-    pub data: MessageData,
+    pub request_msg: MessageData,
+    pub response_msg: MessageData,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -79,12 +73,6 @@ pub struct MessageData
     pub part: RequestPart,
 }
 
-pub struct EncodedMessageUiState
-{
-    pub decoders: Vec<Box<dyn Decoder>>,
-    pub active_decoder: usize,
-}
-
 #[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize)]
 pub enum Status
 {
@@ -100,28 +88,6 @@ pub enum RequestPart
     Response,
 }
 
-impl EncodedMessage
-{
-    pub fn new(part: RequestPart) -> Self
-    {
-        Self {
-            data: MessageData::new(part),
-        }
-    }
-
-    pub fn with_headers(mut self, h: HeaderMap) -> Self
-    {
-        self.data.headers = h;
-        self
-    }
-
-    pub fn with_start_timestamp(mut self, ts: DateTime<Local>) -> Self
-    {
-        self.data.start_timestamp = Some(ts);
-        self
-    }
-}
-
 impl MessageData
 {
     pub fn new(part: RequestPart) -> Self
@@ -134,6 +100,18 @@ impl MessageData
             end_timestamp: None,
             part,
         }
+    }
+
+    pub fn with_headers(mut self, h: HeaderMap) -> Self
+    {
+        self.headers = h;
+        self
+    }
+
+    pub fn with_start_timestamp(mut self, ts: DateTime<Local>) -> Self
+    {
+        self.start_timestamp = Some(ts);
+        self
     }
 }
 

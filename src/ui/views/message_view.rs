@@ -57,14 +57,15 @@ impl<B: Backend> View<B> for MessageView
         HandleResult::Update
     }
 
-    fn on_change(&self, _ctx: &UiContext, change: &SessionChange) -> bool
+    fn on_change(&mut self, _ctx: &UiContext, change: &SessionChange) -> bool
     {
         match change {
-            SessionChange::Connections => false,
-            SessionChange::Connection { .. } => false,
-            SessionChange::Request { uuid } => *uuid == self.request,
-            SessionChange::Message { request_uuid, part } => {
-                *part == self.part && *request_uuid == self.request
+            SessionChange::NewConnection { .. } => false,
+            SessionChange::NewRequest { .. } => false,
+            SessionChange::Request { .. } => false,
+            SessionChange::NewMessage { request, part }
+            | SessionChange::Message { request, part } => {
+                *part == self.part && *request == self.request
             }
         }
     }
