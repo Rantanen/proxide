@@ -59,14 +59,21 @@ pub fn main(
     let (ui_tx, ui_rx) = std::sync::mpsc::channel();
 
     let crossterm_tx = ui_tx.clone();
-    thread::spawn(move || loop {
-        let e = event::read().unwrap();
-        crossterm_tx.send(UiEvent::Crossterm(e)).unwrap();
+    thread::spawn(move || {
+        while let Ok(e) = event::read() {
+            // If the send fails, the UI has stopped so we can exit the thread.
+            if let Err(_) = crossterm_tx.send(UiEvent::Crossterm(e)) {
+                break;
+            }
+        }
     });
 
     thread::spawn(move || {
         while let Ok(e) = session_rx.recv() {
-            ui_tx.send(UiEvent::SessionEvent(e)).unwrap();
+            // If the send fails, the UI has stopped so we can exit the thread.
+            if let Err(_) = ui_tx.send(UiEvent::SessionEvent(e)) {
+                break;
+            }
         }
     });
 
