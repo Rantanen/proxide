@@ -53,6 +53,7 @@ pub enum HandleResult<B: Backend>
     Update,
     Quit,
     PushView(Box<dyn View<B>>),
+    ExitView,
 }
 
 impl<B: Backend> ProxideUi<B>
@@ -120,6 +121,10 @@ impl<B: Backend> ProxideUi<B>
             HandleResult::Ignore => {}
             HandleResult::PushView(v) => {
                 self.ui_stack.push(v);
+                return HandleResult::Update;
+            }
+            HandleResult::ExitView => {
+                self.ui_stack.pop();
                 return HandleResult::Update;
             }
         }

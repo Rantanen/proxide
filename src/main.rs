@@ -112,7 +112,7 @@ fn main() -> Result<(), Error>
     let (session, matches) = match matches.subcommand() {
         ("monitor", Some(sub_m)) => {
             // Monitor sets up the network tack.
-            let listen_port = matches.value_of("listen").unwrap().to_string();
+            let listen_port = sub_m.value_of("listen").unwrap().to_string();
             let target_server = sub_m.value_of("target").unwrap().to_string();
             network_thread = Some(std::thread::spawn(move || {
                 tokio_main(&listen_port, &target_server, abort_rx, ui_tx)
@@ -211,7 +211,7 @@ async fn handle_socket(
     target_server: &str,
 ) -> Result<(), Box<dyn std::error::Error>>
 {
-    let server_stream = TcpStream::connect(format!("127.0.0.1:{}", target_server)).await?;
+    let server_stream = TcpStream::connect(format!("{}", target_server)).await?;
 
     let tx_clone = tx.clone();
     let mut connection =

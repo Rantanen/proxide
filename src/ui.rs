@@ -92,6 +92,7 @@ pub fn main(
         let e = ui_rx.recv().unwrap();
         match state.handle(e) {
             HandleResult::PushView(..) => unreachable!("PushView is handled by the state"),
+            HandleResult::ExitView => unreachable!("ExitView is handled by the state"),
             HandleResult::Ignore => {}
             HandleResult::Update => terminal.draw(|f| state.draw(f)).unwrap(),
             HandleResult::Quit => break,

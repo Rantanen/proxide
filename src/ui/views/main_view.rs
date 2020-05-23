@@ -117,8 +117,8 @@ impl<B: Backend> View<B> for MainView
                     KeyCode::Char('q') => {
                         return self.create_message_view(ctx, RequestPart::Request)
                     }
-                    KeyCode::Char('s') => {
-                        return self.create_message_view(ctx, RequestPart::Request)
+                    KeyCode::Char('e') => {
+                        return self.create_message_view(ctx, RequestPart::Response)
                     }
                     KeyCode::F(12) => {
                         self.export(ctx);

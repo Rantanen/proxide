@@ -88,7 +88,7 @@ impl<B: Backend> View<B> for MessageView
 
         let (title, data) = match self.part {
             RequestPart::Request => ("Re[q]uest Data", &request.request_msg),
-            RequestPart::Response => ("Re[s]ponse Data", &request.response_msg),
+            RequestPart::Response => ("R[e]sponse Data", &request.response_msg),
         };
         let title = format!("{} (offset {})", title, self.offset);
 
@@ -98,7 +98,7 @@ impl<B: Backend> View<B> for MessageView
         };
 
         let request_title = format!("{} ({} bytes{})", title, data.content.len(), duration);
-        let block = create_block(&request_title, true);
+        let block = create_block(&request_title, false);
 
         let (request, message) = match self.get_message(ctx) {
             Some(t) => t,
@@ -126,6 +126,14 @@ impl<B: Backend> View<B> for MessageView
                     self.export(ctx);
                     return HandleResult::Ignore;
                 }
+                KeyCode::Char('q') => match self.part {
+                    RequestPart::Request => return HandleResult::ExitView,
+                    RequestPart::Response => self.part = RequestPart::Request,
+                },
+                KeyCode::Char('e') => match self.part {
+                    RequestPart::Request => self.part = RequestPart::Response,
+                    RequestPart::Response => return HandleResult::ExitView,
+                },
                 KeyCode::Tab => {
                     self.part = match self.part {
                         RequestPart::Request => RequestPart::Response,
