@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 pub mod events;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Default)]
 pub struct Session
 {
     pub connections: IndexedVec<ConnectionData>,
@@ -116,14 +116,6 @@ impl MessageData
 
 impl<T> IndexedVec<T>
 {
-    pub fn new() -> Self
-    {
-        Self {
-            items: vec![],
-            items_by_uuid: HashMap::new(),
-        }
-    }
-
     pub fn push(&mut self, uuid: Uuid, item: T)
     {
         self.items_by_uuid.insert(uuid, self.items.len());
@@ -140,5 +132,16 @@ impl<T> IndexedVec<T>
     {
         let idx = self.items_by_uuid.get(&uuid)?;
         self.items.get_mut(*idx)
+    }
+}
+
+impl<T> Default for IndexedVec<T>
+{
+    fn default() -> Self
+    {
+        Self {
+            items: Default::default(),
+            items_by_uuid: Default::default(),
+        }
     }
 }

@@ -1,3 +1,5 @@
+use chrono::prelude::*;
+use serde::Serialize;
 use tui::layout::{Constraint, Direction, Layout, Rect};
 use tui::style::{Modifier, Style};
 use tui::widgets::{Row, Table, TableState};
@@ -93,6 +95,10 @@ impl<B: Backend> View<B> for MainView
                     KeyCode::Char('s') => {
                         return self.create_message_view(ctx, RequestPart::Request)
                     }
+                    KeyCode::F(12) => {
+                        self.export(ctx);
+                        return HandleResult::Ignore;
+                    }
                     _ => return HandleResult::Ignore,
                 },
                 _ => return HandleResult::Ignore,
@@ -123,12 +129,21 @@ impl<B: Backend> View<B> for MainView
 
     fn help_text(&self, _state: &UiContext, _size: Rect) -> String
     {
-        "Up/Down, j/k: Move up/down".to_string()
+        "Up/Down, j/k: Move up/down; F12: Export session to file".to_string()
     }
 }
 
 impl MainView
 {
+    fn export(&self, ctx: &UiContext)
+    {
+        let filename = format!("session-{}.txt", Local::now().format("%H_%M_%S"));
+        let mut file = std::fs::File::create(filename).unwrap();
+        ctx.data
+            .serialize(&mut rmp_serde::Serializer::new(&mut file))
+            .unwrap();
+    }
+
     fn create_message_view<B: Backend>(&self, ctx: &UiContext, part: RequestPart)
         -> HandleResult<B>
     {

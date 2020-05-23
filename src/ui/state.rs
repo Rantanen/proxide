@@ -4,12 +4,11 @@ use tui::buffer::Buffer;
 use tui::layout::Rect;
 use tui::style::Style;
 use tui::terminal::Frame;
-use tui::widgets::{Paragraph, Widget};
+use tui::widgets::Widget;
 
-use crate::decoders::{Decoder, DecoderFactory};
+use crate::decoders::DecoderFactory;
 use crate::session::events::SessionEvent;
 use crate::session::*;
-use crate::ui::prelude::*;
 use crate::ui::views::{self, View};
 
 #[derive(Debug)]
@@ -47,14 +46,11 @@ pub enum HandleResult<B: Backend>
 
 impl<B: Backend> ProxideUi<B>
 {
-    pub fn new(decoders: Vec<Box<dyn DecoderFactory>>, size: Rect) -> Self
+    pub fn new(session: Session, decoders: Vec<Box<dyn DecoderFactory>>, size: Rect) -> Self
     {
         Self {
             context: UiContext {
-                data: Session {
-                    connections: IndexedVec::new(),
-                    requests: IndexedVec::new(),
-                },
+                data: session,
                 runtime: Runtime {
                     decoder_factories: decoders,
                 },
