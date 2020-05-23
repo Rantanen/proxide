@@ -24,3 +24,4 @@ protofish = { version = "*" }
 serde = { version = "*", features = ["derive"] }
 http-serde = "*"
 rmp-serde = "*"
+lazy_static = "*"

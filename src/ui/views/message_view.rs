@@ -5,6 +5,7 @@ use tui::widgets::Paragraph;
 use uuid::Uuid;
 
 use crate::session::{MessageData, RequestData, RequestPart};
+use crate::ui::toast;
 
 pub struct MessageView
 {
@@ -19,7 +20,7 @@ impl MessageView
     {
         let (request, message) = match self.get_message(ctx) {
             Some(t) => t,
-            None => return,
+            None => return toast::show_error("No active message!"),
         };
 
         let text: String = self
@@ -31,16 +32,12 @@ impl MessageView
             })
             .collect();
 
-        let request = match ctx.data.requests.get_by_uuid(self.request) {
-            Some(r) => r,
-            None => return,
-        };
-        let filename = format!(
-            "export-{}.txt",
-            request.request_data.start_timestamp.format("%H_%M_%S")
-        );
+        let filename = format!("export-{}.txt", request.start_timestamp.format("%H_%M_%S"));
 
-        std::fs::write(filename, text).unwrap();
+        match std::fs::write(&filename, text) {
+            Ok(_) => toast::show_message(format!("Message exported to '{}'", filename)),
+            Err(e) => toast::show_error(format!("Could not write file '{}'\n{}", filename, e)),
+        }
     }
 
     fn get_message<'a>(&self, ctx: &'a UiContext) -> Option<(&'a RequestData, &'a MessageData)>

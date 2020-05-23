@@ -9,6 +9,7 @@ use super::{DetailsView, MessageView};
 use crate::session::{EncodedRequest, IndexedVec, RequestPart};
 
 use crate::ui::controls::TableView;
+use crate::ui::toast;
 
 #[derive(PartialEq)]
 pub enum Window
@@ -161,10 +162,18 @@ impl MainView
     fn export(&self, ctx: &UiContext)
     {
         let filename = format!("session-{}.txt", Local::now().format("%H_%M_%S"));
-        let mut file = std::fs::File::create(filename).unwrap();
-        ctx.data
+        let mut file = match std::fs::File::create(&filename) {
+            Ok(f) => f,
+            Err(e) => return toast::show_error(format!("Error opening file.\n{}", e)),
+        };
+
+        match ctx
+            .data
             .serialize(&mut rmp_serde::Serializer::new(&mut file))
-            .unwrap();
+        {
+            Ok(_) => toast::show_message(format!("Exported session to '{}'", filename)),
+            Err(e) => toast::show_error(format!("Failed to serialize the session:\n{}", e)),
+        }
     }
 
     fn create_message_view<B: Backend>(&self, ctx: &UiContext, part: RequestPart)

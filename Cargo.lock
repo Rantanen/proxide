@@ -717,6 +717,7 @@ dependencies = [
  "h2",
  "http",
  "http-serde",
+ "lazy_static",
  "log",
  "protofish",
  "rmp-serde",

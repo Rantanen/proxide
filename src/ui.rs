@@ -16,6 +16,7 @@ use crate::session::events::SessionEvent;
 mod controls;
 pub mod prelude;
 mod state;
+mod toast;
 mod views;
 
 use state::{HandleResult, ProxideUi, UiEvent};
@@ -55,6 +56,16 @@ pub fn main(
     let mut state = ProxideUi::new(session, decoders, terminal.size().unwrap());
 
     let (ui_tx, ui_rx) = std::sync::mpsc::channel();
+
+    let toast_tx = ui_tx.clone();
+    thread::spawn(move || {
+        loop {
+            // If the send fails, the UI has stopped so we can exit the thread.
+            if let Err(_) = toast_tx.send(UiEvent::Toast(toast::recv())) {
+                break;
+            }
+        }
+    });
 
     let crossterm_tx = ui_tx.clone();
     thread::spawn(move || {

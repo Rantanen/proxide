@@ -1,11 +1,13 @@
-use crossterm::event::{Event as CTEvent, KeyCode};
+use crossterm::event::{Event as CrosstermEvent, KeyCode};
 use tui::backend::Backend;
 use tui::buffer::Buffer;
 use tui::layout::Rect;
-use tui::style::Style;
+use tui::style::{Color, Style};
 use tui::terminal::Frame;
-use tui::widgets::Widget;
+use tui::widgets::{Block, Borders, Clear, Paragraph, Text, Widget};
+use uuid::Uuid;
 
+use super::toast::ToastEvent;
 use crate::decoders::DecoderFactory;
 use crate::session::events::SessionEvent;
 use crate::session::*;
@@ -14,7 +16,8 @@ use crate::ui::views::{self, View};
 #[derive(Debug)]
 pub enum UiEvent
 {
-    Crossterm(crossterm::event::Event),
+    Crossterm(CrosstermEvent),
+    Toast(ToastEvent),
     SessionEvent(SessionEvent),
 }
 
@@ -22,6 +25,14 @@ pub struct ProxideUi<B>
 {
     pub context: UiContext,
     pub ui_stack: Vec<Box<dyn View<B>>>,
+    pub toasts: Vec<Toast>,
+}
+
+pub struct Toast
+{
+    uuid: Uuid,
+    text: String,
+    error: bool,
 }
 
 pub struct Runtime
@@ -57,6 +68,7 @@ impl<B: Backend> ProxideUi<B>
                 size,
             },
             ui_stack: vec![Box::new(views::MainView::default())],
+            toasts: vec![],
         }
     }
 
@@ -82,10 +94,21 @@ impl<B: Backend> ProxideUi<B>
                 }
             }
             UiEvent::Crossterm(e) => return self.on_input(e, self.context.size),
+            UiEvent::Toast(e) => {
+                match e {
+                    ToastEvent::Show { uuid, text, error } => {
+                        self.toasts.push(Toast { uuid, text, error })
+                    }
+                    ToastEvent::Close { uuid } => {
+                        self.toasts.retain(|t| t.uuid != uuid);
+                    }
+                }
+                HandleResult::Update
+            }
         }
     }
 
-    fn on_input(&mut self, e: CTEvent, size: Rect) -> HandleResult<B>
+    fn on_input(&mut self, e: CrosstermEvent, size: Rect) -> HandleResult<B>
     {
         match self
             .ui_stack
@@ -102,7 +125,7 @@ impl<B: Backend> ProxideUi<B>
         }
 
         match e {
-            CTEvent::Resize(width, height) => {
+            CrosstermEvent::Resize(width, height) => {
                 self.context.size = Rect {
                     x: 0,
                     y: 0,
@@ -111,7 +134,7 @@ impl<B: Backend> ProxideUi<B>
                 };
                 HandleResult::Update
             }
-            CTEvent::Key(key) => match key.code {
+            CrosstermEvent::Key(key) => match key.code {
                 KeyCode::Char('Q') => return HandleResult::Quit,
                 KeyCode::Esc => {
                     if self.ui_stack.len() > 1 {
@@ -147,6 +170,46 @@ impl<B: Backend> ProxideUi<B>
         let help_text = view.help_text(&self.context, self.context.size);
         let help_line = TextLine(&help_text);
         f.render_widget(help_line, help_chunk);
+
+        // Draw toasts on top of everything.
+        let mut offset = 1;
+        for t in &self.toasts {
+            offset = t.draw(offset, &mut f);
+        }
+    }
+}
+
+impl Toast
+{
+    fn draw<B: Backend>(&self, offset: u16, f: &mut Frame<B>) -> u16
+    {
+        let screen = f.size();
+        let lines: Vec<_> = self.text.split('\n').collect();
+        let max_line = lines.iter().fold(0, |max, line| max.max(line.len()));
+
+        let mut rect = Rect {
+            x: 0,
+            y: offset,
+            width: (max_line + 2) as u16,
+            height: (lines.len() + 2) as u16,
+        };
+        rect.x = screen.width - rect.width - 2;
+
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(match self.error {
+                true => Color::LightRed,
+                false => Color::Reset,
+            }));
+        f.render_widget(Clear, rect);
+        f.render_widget(
+            Paragraph::new([Text::raw(&self.text)].iter())
+                .block(block)
+                .wrap(false),
+            rect,
+        );
+
+        offset + rect.height
     }
 }
 
