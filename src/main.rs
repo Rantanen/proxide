@@ -1,3 +1,5 @@
+#![allow(clippy::match_bool)]
+
 use clap::{App, AppSettings, Arg, SubCommand};
 use crossterm::{cursor::MoveToPreviousLine, ExecutableCommand};
 use log::error;
@@ -119,7 +121,7 @@ fn main() -> Result<(), Error>
     // Add the decoder args to the subcommands before adding the subcommands to the app.
     for cmd in vec![monitor_cmd, view_cmd]
         .into_iter()
-        .map(|cmd| decoders::grpc::setup_args(cmd))
+        .map(decoders::grpc::setup_args)
     {
         app = app.subcommand(cmd);
     }
@@ -253,7 +255,7 @@ async fn handle_socket(
     target_server: &str,
 ) -> Result<(), Box<dyn std::error::Error>>
 {
-    let server_stream = TcpStream::connect(format!("{}", target_server)).await?;
+    let server_stream = TcpStream::connect(target_server).await?;
 
     let tx_clone = tx.clone();
     let mut connection =

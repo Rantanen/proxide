@@ -47,14 +47,14 @@ impl Decoder for HeaderDecoder
     {
         let mut output = vec![];
 
-        if msg.headers.len() > 0 {
+        if !msg.headers.is_empty() {
             output.push(Text::raw("Headers\n"));
             for (k, v) in &msg.headers {
                 output.push(Text::raw(format!(" - {}: {:?}\n", k, v)));
             }
         }
 
-        if msg.trailers.len() > 0 {
+        if !msg.trailers.is_empty() {
             output.push(Text::raw("\nTrailers\n"));
             for (k, v) in &msg.headers {
                 output.push(Text::raw(format!(" - {}: {:?}\n", k, v)));

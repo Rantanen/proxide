@@ -132,7 +132,7 @@ impl Decoder for GrpcDecoder
     fn decode(&self, msg: &MessageData) -> Vec<Text>
     {
         let mut output = vec![];
-        if msg.headers.len() > 0 {
+        if !msg.headers.is_empty() {
             output.push(Text::raw("Headers\n"));
             for (k, v) in &msg.headers {
                 output.push(Text::raw(format!(" - {}: {:?}\n", k, v)));
@@ -145,7 +145,7 @@ impl Decoder for GrpcDecoder
             output.push(Text::raw("\n"));
         }
 
-        if msg.trailers.len() > 0 {
+        if !msg.trailers.is_empty() {
             output.push(Text::raw("\n"));
             output.push(Text::raw("\nTrailers\n"));
             for (k, v) in &msg.headers {

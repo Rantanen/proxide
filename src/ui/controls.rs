@@ -91,7 +91,7 @@ impl<T> TableView<T>
     {
         // If there's no content, there should be no reason to move.
         // We'd just end up panicing on the calculations.
-        if content.len() == 0 {
+        if content.is_empty() {
             return;
         }
 

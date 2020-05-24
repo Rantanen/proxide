@@ -61,7 +61,7 @@ pub fn main(
     thread::spawn(move || {
         loop {
             // If the send fails, the UI has stopped so we can exit the thread.
-            if let Err(_) = toast_tx.send(UiEvent::Toast(toast::recv())) {
+            if toast_tx.send(UiEvent::Toast(toast::recv())).is_err() {
                 break;
             }
         }
@@ -71,7 +71,7 @@ pub fn main(
     thread::spawn(move || {
         while let Ok(e) = event::read() {
             // If the send fails, the UI has stopped so we can exit the thread.
-            if let Err(_) = crossterm_tx.send(UiEvent::Crossterm(e)) {
+            if crossterm_tx.send(UiEvent::Crossterm(e)).is_err() {
                 break;
             }
         }
@@ -80,7 +80,7 @@ pub fn main(
     thread::spawn(move || {
         while let Ok(e) = session_rx.recv() {
             // If the send fails, the UI has stopped so we can exit the thread.
-            if let Err(_) = ui_tx.send(UiEvent::SessionEvent(e)) {
+            if ui_tx.send(UiEvent::SessionEvent(Box::new(e))).is_err() {
                 break;
             }
         }

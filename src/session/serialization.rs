@@ -94,11 +94,9 @@ impl Session
         // occur here.
         match self.serialize(&mut rmp_serde::Serializer::new(&mut file)) {
             Ok(_) => Ok(()),
-            Err(e) => {
-                return Err(SerializationError::FormatError {
-                    source: Box::new(e),
-                })
-            }
+            Err(e) => Err(SerializationError::FormatError {
+                source: Box::new(e),
+            }),
         }
     }
 }
@@ -149,7 +147,7 @@ pub fn capture_to_file<F: FnMut(&CaptureStatus), P: AsRef<Path> + ToString>(
             let mut len = buffer.len();
             while len >= 0x80 {
                 len_buffer.push((len & 0x7f | 0x80) as u8);
-                len = len >> 7;
+                len >>= 7;
             }
             len_buffer.push(len as u8);
 
@@ -183,11 +181,11 @@ pub fn read_capture_file(mut file: std::fs::File) -> Result<Session, Serializati
         // Handle the first byte separately since this is a valid moment for the stream to end. If
         // the read here fails, it means we reached the end of the stream when we read the last
         // event.
-        if let Err(_) = file.read_exact(byte) {
+        if file.read_exact(byte).is_err() {
             return Ok(session);
         }
         loop {
-            payload_len = payload_len + (((byte[0] & 0x7f) as usize) << (7 * idx));
+            payload_len += ((byte[0] & 0x7f) as usize) << (7 * idx);
             idx += 1;
             if byte[0] & 0x80 == 0 {
                 break;
@@ -195,7 +193,7 @@ pub fn read_capture_file(mut file: std::fs::File) -> Result<Session, Serializati
 
             // An error here would indicate that the input file was cut in the middle of the length
             // data.
-            if let Err(_) = file.read_exact(byte) {
+            if file.read_exact(byte).is_err() {
                 log::error!("Incomplete input file");
                 return Ok(session);
             }
@@ -204,7 +202,7 @@ pub fn read_capture_file(mut file: std::fs::File) -> Result<Session, Serializati
         // An error here indicates incomplete payload.
         payload.clear();
         payload.resize(payload_len, 0);
-        if let Err(_) = file.read_exact(&mut payload) {
+        if file.read_exact(&mut payload).is_err() {
             log::error!("Incomplete input file");
             return Ok(session);
         }

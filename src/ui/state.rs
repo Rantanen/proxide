@@ -18,7 +18,7 @@ pub enum UiEvent
 {
     Crossterm(CrosstermEvent),
     Toast(ToastEvent),
-    SessionEvent(SessionEvent),
+    SessionEvent(Box<SessionEvent>),
 }
 
 pub struct ProxideUi<B>
@@ -80,13 +80,13 @@ impl<B: Backend> ProxideUi<B>
                 let results: Vec<_> = self
                     .context
                     .data
-                    .handle(e)
+                    .handle(*e)
                     .into_iter()
                     .map(|change| {
                         self.ui_stack
                             .last_mut()
                             .unwrap()
-                            .on_change(&mut self.context, &change)
+                            .on_change(&self.context, &change)
                     })
                     .collect();
                 match results.into_iter().any(|b| b) {
@@ -94,7 +94,7 @@ impl<B: Backend> ProxideUi<B>
                     false => HandleResult::Ignore,
                 }
             }
-            UiEvent::Crossterm(e) => return self.on_input(e, self.context.size),
+            UiEvent::Crossterm(e) => self.on_input(e, self.context.size),
             UiEvent::Toast(e) => {
                 match e {
                     ToastEvent::Show { uuid, text, error } => {
@@ -115,7 +115,7 @@ impl<B: Backend> ProxideUi<B>
             .ui_stack
             .last_mut()
             .unwrap()
-            .on_input(&mut self.context, e, size)
+            .on_input(&self.context, e, size)
         {
             r @ HandleResult::Update | r @ HandleResult::Quit => return r,
             HandleResult::Ignore => {}
@@ -140,7 +140,7 @@ impl<B: Backend> ProxideUi<B>
                 HandleResult::Update
             }
             CrosstermEvent::Key(key) => match key.code {
-                KeyCode::Char('Q') => return HandleResult::Quit,
+                KeyCode::Char('Q') => HandleResult::Quit,
                 KeyCode::Esc => {
                     if self.ui_stack.len() > 1 {
                         self.ui_stack.pop();
@@ -164,7 +164,7 @@ impl<B: Backend> ProxideUi<B>
             height: chunk.height - 2,
         };
         let view = self.ui_stack.last_mut().unwrap();
-        view.draw(&mut self.context, &mut f, view_chunk);
+        view.draw(&self.context, &mut f, view_chunk);
 
         let help_chunk = Rect {
             x: 1,

@@ -181,7 +181,7 @@ impl ProxyRequest
 
         ui.send(SessionEvent::NewRequest(NewRequestEvent {
             connection_uuid,
-            uuid: uuid,
+            uuid,
             uri: client_head.uri.clone(),
             method: client_head.method.clone(),
             headers: client_head.headers.clone(),
@@ -270,7 +270,7 @@ impl ProxyRequest
 
             let (response_head, response_body) = response.into_parts();
             ui.send(SessionEvent::NewResponse(NewResponseEvent {
-                uuid: uuid,
+                uuid,
                 connection_uuid,
                 timestamp: Local::now(),
                 headers: response_head.headers.clone(),
@@ -346,7 +346,7 @@ async fn pipe_stream(
 
         // Send a notification to the UI.
         ui.send(SessionEvent::MessageData(MessageDataEvent {
-            uuid: uuid,
+            uuid,
             data: b.clone(),
             part,
         }))
@@ -377,16 +377,16 @@ async fn notify_message_done(
     match r {
         Ok(trailers) => ui
             .send(SessionEvent::MessageDone(MessageDoneEvent {
-                uuid: uuid,
+                uuid,
                 part,
                 status: Status::Succeeded,
                 timestamp: Local::now(),
-                trailers: trailers,
+                trailers,
             }))
             .unwrap(),
         Err(e) => {
             ui.send(SessionEvent::MessageDone(MessageDoneEvent {
-                uuid: uuid,
+                uuid,
                 part,
                 status: Status::Succeeded,
                 timestamp: Local::now(),
