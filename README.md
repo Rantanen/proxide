@@ -13,13 +13,27 @@ cargo install proxide
 
 ## Usage
 
-Run proxide listening on port `1234`, bridging connections to `localhost:8888`
-and using `my.proto`, `dependent.proto` and `third.proto` gRPC descriptions to
-decode the traffic.
+Run the proxide UI listening on port `1234`, bridging connections to
+`localhost:8888` and using `my.proto`, `dependent.proto` and `third.proto` gRPC
+descriptions to decode the traffic.
 
-```
-proxide monitor -l 1234 -t localhost:8888 --grpc my.proto dependent.proto third.proto
-```
+> ```
+> proxide monitor -l 1234 -t localhost:8888 --grpc my.proto dependent.proto third.proto
+> ```
+
+Bridge the local port `8888` to `remote.server:8888` while capturing the
+network traffic to file `capture.bin` for later analysis.
+
+> ```
+> proxide capture capture.bin -l 8888 -t remote.server:8888
+> ```
+
+View the previously captured file uing `service.proto` to decode the gRPC
+traffic.
+
+> ```
+> proxide view capture.bin --grpc service.proto
+> ```
 
 ## Status
 
@@ -35,7 +49,7 @@ missing.
   - [ ] Search/highlight support.
   - [ ] Clipboard integration.
     - [x] Well we got request/response exporting at least!
-  - [ ] Follow communication streams.
+  - [x] Follow communication streams.
   - [ ] Switch between different encoders manually (Raw, Headers, gRPC).
 - [ ] Better support for corrupted/incomplete message display.
 - [x] Import/Export session.
