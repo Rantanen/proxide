@@ -38,6 +38,9 @@ impl Default for MainView
         Self {
             details_view: DetailsView::default(),
             requests_state: TableView::<EncodedRequest>::new("[R]equests")
+                .with_group_filter(|current, maybe| {
+                    current.request_data.connection_uuid == maybe.request_data.connection_uuid
+                })
                 .with_column("Requests", Constraint::Percentage(100), |item| {
                     format!(
                         "{} {}",
@@ -151,7 +154,8 @@ impl<B: Backend> View<B> for MainView
 
     fn help_text(&self, _state: &UiContext, _size: Rect) -> String
     {
-        "Up/Down, j/k: Move up/down; F12: Export session to file".to_string()
+        "Up/Down, j/k: Previous/Next request (Shift to follow connection); F12: Export session to file"
+            .to_string()
     }
 }
 

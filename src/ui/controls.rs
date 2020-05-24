@@ -1,10 +1,10 @@
+use crossterm::event::KeyModifiers;
 use std::borrow::Cow;
 use tui::backend::Backend;
 use tui::style::{Modifier, Style};
 use tui::widgets::{Row, Table, TableState};
 
 use super::prelude::*;
-use crate::session::IndexedVec;
 
 pub struct TableView<T>
 {
@@ -12,6 +12,8 @@ pub struct TableView<T>
 
     tui_state: TableState,
     user_selected: Option<usize>,
+
+    group_filter: fn(&T, &T) -> bool,
 
     columns: Vec<Column<T>>,
 }
@@ -23,6 +25,11 @@ struct Column<T>
     map: fn(&T) -> String,
 }
 
+enum Dir
+{
+    Previous,
+    Next,
+}
 impl<T> TableView<T>
 {
     pub fn new<TTitle: Into<Cow<'static, str>>>(title: TTitle) -> Self
@@ -31,6 +38,7 @@ impl<T> TableView<T>
             title: title.into(),
             tui_state: Default::default(),
             user_selected: Default::default(),
+            group_filter: |_, _| true,
             columns: Default::default(),
         }
     }
@@ -50,27 +58,27 @@ impl<T> TableView<T>
         self
     }
 
+    pub fn with_group_filter(mut self, group_filter: fn(&T, &T) -> bool) -> Self
+    {
+        self.group_filter = group_filter;
+        self
+    }
+
     pub fn on_input<B: Backend>(
         &mut self,
-        content: &IndexedVec<T>,
+        content: &[T],
         e: CTEvent,
         _size: Rect,
     ) -> HandleResult<B>
     {
         match e {
             CTEvent::Key(key) => match key.code {
-                KeyCode::Char('k') | KeyCode::Up => self.user_select(
-                    content,
-                    self.user_selected
-                        .or_else(|| self.tui_state.selected())
-                        .map(|i| i.saturating_sub(1)),
-                ),
-                KeyCode::Char('j') | KeyCode::Down => self.user_select(
-                    content,
-                    self.user_selected
-                        .or_else(|| self.tui_state.selected())
-                        .map(|i| i + 1),
-                ),
+                KeyCode::Char('k') | KeyCode::Char('K') | KeyCode::Up => {
+                    self.user_move(content, key.modifiers == KeyModifiers::SHIFT, Dir::Previous)
+                }
+                KeyCode::Char('j') | KeyCode::Char('J') | KeyCode::Down => {
+                    self.user_move(content, key.modifiers == KeyModifiers::SHIFT, Dir::Next)
+                }
                 KeyCode::Esc => self.user_select(content, None),
                 _ => return HandleResult::Ignore,
             },
@@ -79,20 +87,51 @@ impl<T> TableView<T>
         HandleResult::Update
     }
 
-    pub fn user_select(&mut self, content: &IndexedVec<T>, idx: Option<usize>)
+    fn user_move(&mut self, content: &[T], by_group: bool, dir: Dir)
+    {
+        // Get the current selection.
+        let mut idx = match self.tui_state.selected() {
+            None => return self.user_select(content, Some(content.len() - 1)),
+            Some(idx) => idx.min(content.len() - 1),
+        };
+        let current_item = &content[idx];
+
+        // Loop until we'll find an item that matches the filter.
+        loop {
+            idx = match dir {
+                Dir::Previous => match idx {
+                    0 => return,
+                    other => other.saturating_sub(1),
+                },
+                Dir::Next => match idx + 1 {
+                    c if c >= content.len() => {
+                        return;
+                    }
+                    c => c,
+                },
+            };
+
+            let candidate_item = &content[idx];
+            if !by_group || (self.group_filter)(current_item, candidate_item) {
+                return self.user_select(content, Some(idx));
+            }
+        }
+    }
+
+    pub fn user_select(&mut self, content: &[T], idx: Option<usize>)
     {
         match idx {
             None => {
                 self.user_selected = None;
-                if content.items.is_empty() {
+                if content.is_empty() {
                     self.tui_state.select(None);
                 } else {
-                    self.tui_state.select(Some(content.items.len() - 1));
+                    self.tui_state.select(Some(content.len() - 1));
                 }
             }
             Some(mut idx) => {
-                if idx >= content.items.len() {
-                    idx = content.items.len() - 1;
+                if idx >= content.len() {
+                    idx = content.len() - 1;
                 }
                 self.user_selected = Some(idx);
                 self.tui_state.select(self.user_selected);
@@ -100,7 +139,7 @@ impl<T> TableView<T>
         }
     }
 
-    pub fn auto_select(&mut self, content: &IndexedVec<T>, idx: Option<usize>)
+    pub fn auto_select(&mut self, content: &[T], idx: Option<usize>)
     {
         // If the user has selected something, skip the auto select. The user select will override
         // this.
@@ -109,20 +148,18 @@ impl<T> TableView<T>
         }
 
         let selection = match idx {
-            Some(idx) if idx >= content.items.len() => Some(content.items.len() - 1),
-            None if content.items.is_empty() => None,
-            None => Some(content.items.len() - 1),
+            Some(idx) if idx >= content.len() => Some(content.len() - 1),
+            None if content.is_empty() => None,
+            None => Some(content.len() - 1),
             some => some,
         };
 
         self.tui_state.select(selection);
     }
 
-    pub fn selected<'a>(&self, content: &'a IndexedVec<T>) -> Option<&'a T>
+    pub fn selected<'a>(&self, content: &'a [T]) -> Option<&'a T>
     {
-        self.tui_state
-            .selected()
-            .and_then(|idx| content.items.get(idx))
+        self.tui_state.selected().and_then(|idx| content.get(idx))
     }
 
     pub fn draw_requests<B: Backend>(
@@ -134,16 +171,34 @@ impl<T> TableView<T>
     )
     {
         let block = create_block(&self.title, is_active);
+        let currently_selected = self.selected(content);
 
         // Get a borrow of columns to avoid having to use `self` within the closure below.
         let columns = &self.columns;
+        let group_filter = &self.group_filter;
 
         let widths = columns.iter().map(|c| c.constraint).collect::<Vec<_>>();
         let table = Table::new(
             columns.iter().map(|c| c.title),
-            content
-                .iter()
-                .map(|item| Row::Data(columns.iter().map(move |c| (c.map)(item)))),
+            content.iter().map(|item| {
+                // This is a bit of a mess. :(
+                //
+                // We'll define the closure beforehand so it's the _same_ closure for both match
+                // arms. Otherwise it would be a _different_ closure (even if it did the same
+                // thing), thus resulting in "different types for match arms".
+                let closure = move |c: &Column<T>| (c.map)(item);
+
+                // Match the currently selected item. If the currently selected item exists, we'll
+                // want to highlight all other itms that belong to the same group. Any other items
+                // is rendered normally.
+                match currently_selected {
+                    Some(cs) if (group_filter)(cs, item) => Row::StyledData(
+                        columns.iter().map(closure),
+                        Style::default().modifier(Modifier::BOLD),
+                    ),
+                    _ => Row::Data(columns.iter().map(closure)),
+                }
+            }),
         )
         .block(block)
         .widths(&widths)
