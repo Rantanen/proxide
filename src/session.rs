@@ -7,6 +7,7 @@ use std::net::SocketAddr;
 use uuid::Uuid;
 
 pub mod events;
+pub mod serialization;
 
 #[derive(Serialize, Deserialize, Default)]
 pub struct Session

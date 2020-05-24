@@ -4,7 +4,7 @@ use std::net::SocketAddr;
 
 use super::*;
 
-#[derive(Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 pub enum SessionEvent
 {
     NewConnection(NewConnectionEvent),
@@ -20,7 +20,7 @@ pub enum SessionEvent
     RequestDone(RequestDoneEvent),
 }
 
-#[derive(Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct NewConnectionEvent
 {
     pub uuid: Uuid,
@@ -28,27 +28,31 @@ pub struct NewConnectionEvent
     pub timestamp: DateTime<Local>,
 }
 
-#[derive(Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct NewRequestEvent
 {
     pub connection_uuid: Uuid,
     pub uuid: Uuid,
+    #[serde(with = "http_serde::uri")]
     pub uri: Uri,
+    #[serde(with = "http_serde::method")]
     pub method: Method,
+    #[serde(with = "http_serde::header_map")]
     pub headers: HeaderMap,
     pub timestamp: DateTime<Local>,
 }
 
-#[derive(Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct NewResponseEvent
 {
     pub connection_uuid: Uuid,
     pub uuid: Uuid,
+    #[serde(with = "http_serde::header_map")]
     pub headers: HeaderMap,
     pub timestamp: DateTime<Local>,
 }
 
-#[derive(Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct MessageDataEvent
 {
     pub uuid: Uuid,
@@ -56,17 +60,18 @@ pub struct MessageDataEvent
     pub part: RequestPart,
 }
 
-#[derive(Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct MessageDoneEvent
 {
     pub uuid: Uuid,
     pub part: RequestPart,
     pub status: Status,
     pub timestamp: DateTime<Local>,
+    #[serde(with = "super::serialization::opt_header_map")]
     pub trailers: Option<HeaderMap>,
 }
 
-#[derive(Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct RequestDoneEvent
 {
     pub uuid: Uuid,

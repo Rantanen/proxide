@@ -1,5 +1,4 @@
 use chrono::prelude::*;
-use serde::Serialize;
 use tui::layout::{Constraint, Direction, Layout, Rect};
 
 use super::prelude::*;
@@ -164,17 +163,9 @@ impl MainView
     fn export(&self, ctx: &UiContext)
     {
         let filename = format!("session-{}.txt", Local::now().format("%H_%M_%S"));
-        let mut file = match std::fs::File::create(&filename) {
-            Ok(f) => f,
-            Err(e) => return toast::show_error(format!("Error opening file.\n{}", e)),
-        };
-
-        match ctx
-            .data
-            .serialize(&mut rmp_serde::Serializer::new(&mut file))
-        {
+        match ctx.data.write_to_file(&filename) {
             Ok(_) => toast::show_message(format!("Exported session to '{}'", filename)),
-            Err(e) => toast::show_error(format!("Failed to serialize the session:\n{}", e)),
+            Err(e) => toast::show_error(e.to_string()),
         }
     }
 

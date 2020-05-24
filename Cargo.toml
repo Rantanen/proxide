@@ -30,3 +30,4 @@ serde = { version = "1", features = ["derive"] }
 http-serde = "1"
 rmp-serde = "0.14"
 lazy_static = "1"
+ctrlc = "3"

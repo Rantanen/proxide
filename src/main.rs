@@ -1,6 +1,8 @@
 use clap::{App, AppSettings, Arg, SubCommand};
+use crossterm::{cursor::MoveToPreviousLine, ExecutableCommand};
 use log::error;
 use snafu::{ResultExt, Snafu};
+use std::io::stdout;
 use std::net::SocketAddr;
 use std::sync::mpsc::Sender;
 use tokio::net::{TcpListener, TcpStream};
@@ -30,11 +32,10 @@ pub enum Error
         source: decoders::Error
     },
 
-    #[snafu(display("Could not read file '{}': {}", file, source))]
-    FileReadError
+    #[snafu(display("{}", source))]
+    SerializationError
     {
-        file: String,
-        source: Box<dyn std::error::Error + Send>,
+        source: session::serialization::SerializationError,
     },
 }
 
@@ -54,7 +55,7 @@ fn main() -> Result<(), Error>
     // Both of these commands should support the decoder options so we'll want to further process
     // them before constructing the clap App.
     let monitor_cmd = SubCommand::with_name("monitor")
-        .about("Set up Proxide to monitor network traffic")
+        .about("Monitor network traffic using the Proxide UI")
         .arg(
             Arg::with_name("listen")
                 .short("l")
@@ -73,7 +74,7 @@ fn main() -> Result<(), Error>
         );
 
     let view_cmd = SubCommand::with_name("view")
-        .about("View existing session")
+        .about("View traffic from a session or capture file")
         .arg(
             Arg::with_name("file")
                 .value_name("file")
@@ -85,7 +86,35 @@ fn main() -> Result<(), Error>
     let mut app = App::new("Proxide - HTTP2 debugging proxy")
         .version(env!("CARGO_PKG_VERSION"))
         .author("Mikko Rantanen <rantanen@jubjubnest.net>")
-        .setting(AppSettings::SubcommandRequiredElseHelp);
+        .setting(AppSettings::SubcommandRequiredElseHelp)
+        .subcommand(
+            SubCommand::with_name("capture")
+                .about("Capture network traffic into a file for later analysis")
+                .arg(
+                    Arg::with_name("file")
+                        .short("o")
+                        .value_name("file")
+                        .required(true)
+                        .index(1)
+                        .help("Specify the output file"),
+                )
+                .arg(
+                    Arg::with_name("listen")
+                        .short("l")
+                        .value_name("port")
+                        .required(true)
+                        .help("Specify listening port")
+                        .takes_value(true),
+                )
+                .arg(
+                    Arg::with_name("target")
+                        .short("t")
+                        .value_name("port")
+                        .required(true)
+                        .help("Specify target port")
+                        .takes_value(true),
+                ),
+        );
 
     // Add the decoder args to the subcommands before adding the subcommands to the app.
     for cmd in vec![monitor_cmd, view_cmd]
@@ -119,18 +148,31 @@ fn main() -> Result<(), Error>
             }));
             (Session::default(), sub_m)
         }
+        ("capture", Some(sub_m)) => {
+            let filename = sub_m.value_of("file").unwrap();
+
+            // Monitor sets up the network tack.
+            let listen_port = sub_m.value_of("listen").unwrap().to_string();
+            let target_server = sub_m.value_of("target").unwrap().to_string();
+            println!(
+                "Capturing traffic to '{}'. Press Ctrl-C to stop capture.",
+                target_server
+            );
+            std::thread::spawn(move || tokio_main(&listen_port, &target_server, abort_rx, ui_tx));
+            println!("... Waiting for connections.");
+            return session::serialization::capture_to_file(ui_rx, abort_tx, &filename, |status| {
+                let _ = stdout().execute(MoveToPreviousLine(1));
+                println!(
+                    "Received {} requests in {} connections. Total of {} bytes of data.",
+                    status.requests, status.connections, status.data
+                );
+            })
+            .context(SerializationError {});
+        }
         ("view", Some(sub_m)) => {
             let filename = sub_m.value_of("file").unwrap();
-            let file = std::fs::File::open(filename)
-                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send>)
-                .context(FileReadError {
-                    file: filename.to_string(),
-                })?;
-            let session = rmp_serde::from_read(file)
-                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send>)
-                .context(FileReadError {
-                    file: filename.to_string(),
-                })?;
+            let session =
+                session::serialization::read_file(&filename).context(SerializationError {})?;
             (session, sub_m)
         }
         (_, _) => panic!("Sub command not handled!"),
