@@ -1,6 +1,6 @@
 [package]
 name = "proxide"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["Mikko Rantanen <jubjub@jubjubnest.net>"]
 edition = "2018"
 license = "GPL-3.0-only"
@@ -9,7 +9,7 @@ Proxide is a debugging proxy for capturing HTTP/2 and gRPC traffic.
 """
 repository = "https://github.com/Rantanen/proxide"
 readme = "README.md"
-excldue = [ "/test" ]
+exclude = [ "/test" ]
 
 [dependencies]
 h2 = "0.2"
