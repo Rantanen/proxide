@@ -89,6 +89,12 @@ impl<T> TableView<T>
 
     fn user_move(&mut self, content: &[T], by_group: bool, dir: Dir)
     {
+        // If there's no content, there should be no reason to move.
+        // We'd just end up panicing on the calculations.
+        if content.len() == 0 {
+            return;
+        }
+
         // Get the current selection.
         let mut idx = match self.tui_state.selected() {
             None => return self.user_select(content, Some(content.len() - 1)),
