@@ -20,7 +20,6 @@ pub enum UiEvent
     Crossterm(CrosstermEvent),
     Toast(ToastEvent),
     SessionEvent(Box<SessionEvent>),
-    SessionOperation(Box<dyn FnOnce(&mut UiContext) + Send>),
 }
 
 pub struct ProxideUi<B>
@@ -106,10 +105,6 @@ impl<B: Backend> ProxideUi<B>
                     true => HandleResult::Update,
                     false => HandleResult::Ignore,
                 }
-            }
-            UiEvent::SessionOperation(op) => {
-                op(&mut self.context);
-                HandleResult::Update
             }
             UiEvent::Crossterm(e) => self.on_input(e, self.context.size),
             UiEvent::Toast(e) => {

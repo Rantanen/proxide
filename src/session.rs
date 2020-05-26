@@ -101,7 +101,7 @@ impl Session
 {
     fn post_deserialize(&mut self)
     {
-        self.requests.refilter();
+        self.requests.post_deserialize();
     }
 }
 
