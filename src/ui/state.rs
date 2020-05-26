@@ -1,4 +1,5 @@
 use crossterm::event::{Event as CrosstermEvent, KeyCode};
+use std::sync::mpsc::Sender;
 use tui::backend::Backend;
 use tui::buffer::Buffer;
 use tui::layout::Rect;
@@ -11,20 +12,22 @@ use super::toast::ToastEvent;
 use crate::decoders::DecoderFactory;
 use crate::session::events::SessionEvent;
 use crate::session::*;
+use crate::ui::menus::Menu;
 use crate::ui::views::{self, View};
 
-#[derive(Debug)]
 pub enum UiEvent
 {
     Crossterm(CrosstermEvent),
     Toast(ToastEvent),
     SessionEvent(Box<SessionEvent>),
+    SessionOperation(Box<dyn FnOnce(&mut UiContext) + Send>),
 }
 
 pub struct ProxideUi<B>
 {
     pub context: UiContext,
     pub ui_stack: Vec<Box<dyn View<B>>>,
+    pub menu_stack: Vec<Box<dyn Menu<B>>>,
     pub toasts: Vec<Toast>,
 }
 
@@ -38,6 +41,7 @@ pub struct Toast
 pub struct Runtime
 {
     pub decoder_factories: Vec<Box<dyn DecoderFactory>>,
+    pub tx: Sender<UiEvent>,
 }
 
 pub struct UiContext
@@ -52,23 +56,32 @@ pub enum HandleResult<B: Backend>
     Ignore,
     Update,
     Quit,
+    OpenMenu(Box<dyn Menu<B>>),
     PushView(Box<dyn View<B>>),
     ExitView,
+    ExitMenu,
 }
 
 impl<B: Backend> ProxideUi<B>
 {
-    pub fn new(session: Session, decoders: Vec<Box<dyn DecoderFactory>>, size: Rect) -> Self
+    pub fn new(
+        session: Session,
+        tx: Sender<UiEvent>,
+        decoders: Vec<Box<dyn DecoderFactory>>,
+        size: Rect,
+    ) -> Self
     {
         Self {
             context: UiContext {
                 data: session,
                 runtime: Runtime {
                     decoder_factories: decoders,
+                    tx,
                 },
                 size,
             },
             ui_stack: vec![Box::new(views::MainView::default())],
+            menu_stack: vec![],
             toasts: vec![],
         }
     }
@@ -94,6 +107,10 @@ impl<B: Backend> ProxideUi<B>
                     false => HandleResult::Ignore,
                 }
             }
+            UiEvent::SessionOperation(op) => {
+                op(&mut self.context);
+                HandleResult::Update
+            }
             UiEvent::Crossterm(e) => self.on_input(e, self.context.size),
             UiEvent::Toast(e) => {
                 match e {
@@ -111,20 +128,33 @@ impl<B: Backend> ProxideUi<B>
 
     fn on_input(&mut self, e: CrosstermEvent, size: Rect) -> HandleResult<B>
     {
-        match self
-            .ui_stack
-            .last_mut()
-            .unwrap()
-            .on_input(&self.context, e, size)
-        {
+        let result = if let Some(menu) = self.menu_stack.last_mut() {
+            menu.on_input(&mut self.context, e)
+        } else {
+            self.ui_stack
+                .last_mut()
+                .unwrap()
+                .on_input(&self.context, e, size)
+        };
+
+        match result {
             r @ HandleResult::Update | r @ HandleResult::Quit => return r,
             HandleResult::Ignore => {}
             HandleResult::PushView(v) => {
                 self.ui_stack.push(v);
                 return HandleResult::Update;
             }
+            HandleResult::OpenMenu(m) => {
+                self.menu_stack.push(m);
+                return HandleResult::Update;
+            }
             HandleResult::ExitView => {
+                self.menu_stack = vec![];
                 self.ui_stack.pop();
+                return HandleResult::Update;
+            }
+            HandleResult::ExitMenu => {
+                self.menu_stack.pop();
                 return HandleResult::Update;
             }
         }
@@ -163,18 +193,36 @@ impl<B: Backend> ProxideUi<B>
             width: chunk.width,
             height: chunk.height - 2,
         };
-        let view = self.ui_stack.last_mut().unwrap();
-        view.draw(&self.context, &mut f, view_chunk);
 
-        let help_chunk = Rect {
+        let mut idx = self.ui_stack.len() - 1;
+        while self.ui_stack[idx].transparent() {
+            idx -= 1;
+        }
+
+        for i in idx..self.ui_stack.len() {
+            &mut self.ui_stack[i].draw(&self.context, &mut f, view_chunk);
+        }
+
+        // The bottom area is reserved for menus or help text depending on
+        // whether a menu is up.
+        let help_text = if let Some(menu) = self.menu_stack.last() {
+            menu.help_text(&self.context)
+        } else {
+            let view = self.ui_stack.last_mut().unwrap();
+            view.help_text(&self.context, self.context.size)
+        };
+
+        let text_chunk = Rect {
             x: 1,
             y: chunk.height - 2,
             width: chunk.width - 2,
-            height: 1,
+            height: 2,
         };
-        let help_text = view.help_text(&self.context, self.context.size);
-        let help_line = TextLine(&help_text);
-        f.render_widget(help_line, help_chunk);
+
+        f.render_widget(
+            Paragraph::new([Text::raw(&help_text)].iter()).wrap(false),
+            text_chunk,
+        );
 
         // Draw toasts on top of everything.
         let mut offset = 1;
@@ -245,7 +293,7 @@ impl std::fmt::Display for Status
     }
 }
 
-struct TextLine<'a>(&'a str);
+pub struct TextLine<'a>(pub &'a str);
 impl<'a> Widget for TextLine<'a>
 {
     fn render(self, area: Rect, buf: &mut Buffer)

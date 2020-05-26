@@ -6,6 +6,7 @@ use super::{DetailsView, MessageView};
 use crate::session::{EncodedRequest, RequestPart};
 
 use crate::ui::controls::TableView;
+use crate::ui::menus::FilterMenu;
 use crate::ui::toast;
 
 #[derive(PartialEq)]
@@ -122,6 +123,18 @@ impl<B: Backend> View<B> for MainView
                     KeyCode::Char('e') => {
                         return self.create_message_view(ctx, RequestPart::Response)
                     }
+                    KeyCode::Char('f') => {
+                        return self
+                            .requests_state
+                            .selected(&ctx.data.requests)
+                            .map(|request| {
+                                self.requests_state.lock(&ctx.data.requests);
+                                HandleResult::OpenMenu(Box::new(FilterMenu {
+                                    request: request.request_data.uuid,
+                                }))
+                            })
+                            .unwrap_or_else(|| HandleResult::Ignore)
+                    }
                     KeyCode::F(12) => {
                         self.export(ctx);
                         return HandleResult::Ignore;
@@ -153,8 +166,9 @@ impl<B: Backend> View<B> for MainView
 
     fn help_text(&self, _state: &UiContext, _size: Rect) -> String
     {
-        "Up/Down, j/k: Previous/Next request (Shift to follow connection); F12: Export session to file"
-            .to_string()
+        format!("{}\n{}",
+            "[Up/Down,j/k]: Previous/Next request ([Shift]: Follow connection); [F12]: Export session to file",
+            "[F]: Manage filters")
     }
 }
 

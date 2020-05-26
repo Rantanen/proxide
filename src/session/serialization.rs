@@ -104,6 +104,10 @@ impl Session
 pub fn read_session_file(file: std::fs::File) -> Result<Session, SerializationError>
 {
     rmp_serde::from_read(file)
+        .map(|mut sess: Session| {
+            sess.post_deserialize();
+            sess
+        })
         .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send>)
         .context(FormatError {})
 }

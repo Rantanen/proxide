@@ -3,8 +3,10 @@ use std::borrow::Cow;
 use tui::backend::Backend;
 use tui::style::{Modifier, Style};
 use tui::widgets::{Row, Table, TableState};
+use uuid::Uuid;
 
 use super::prelude::*;
+use crate::session::IndexedVec;
 
 pub struct TableView<T>
 {
@@ -12,6 +14,7 @@ pub struct TableView<T>
 
     tui_state: TableState,
     user_selected: Option<usize>,
+    locked: Option<Uuid>,
 
     group_filter: fn(&T, &T) -> bool,
 
@@ -30,7 +33,7 @@ enum Dir
     Previous,
     Next,
 }
-impl<T> TableView<T>
+impl<T: crate::session::HasKey> TableView<T>
 {
     pub fn new<TTitle: Into<Cow<'static, str>>>(title: TTitle) -> Self
     {
@@ -38,6 +41,7 @@ impl<T> TableView<T>
             title: title.into(),
             tui_state: Default::default(),
             user_selected: Default::default(),
+            locked: None,
             group_filter: |_, _| true,
             columns: Default::default(),
         }
@@ -66,7 +70,7 @@ impl<T> TableView<T>
 
     pub fn on_input<B: Backend>(
         &mut self,
-        content: &[T],
+        content: &IndexedVec<T>,
         e: CTEvent,
         _size: Rect,
     ) -> HandleResult<B>
@@ -87,18 +91,18 @@ impl<T> TableView<T>
         HandleResult::Update
     }
 
-    fn user_move(&mut self, content: &[T], by_group: bool, dir: Dir)
+    fn user_move(&mut self, content: &IndexedVec<T>, by_group: bool, dir: Dir)
     {
         // If there's no content, there should be no reason to move.
         // We'd just end up panicing on the calculations.
-        if content.is_empty() {
+        if content.is_empty_filtered() {
             return;
         }
 
         // Get the current selection.
         let mut idx = match self.tui_state.selected() {
-            None => return self.user_select(content, Some(content.len() - 1)),
-            Some(idx) => idx.min(content.len() - 1),
+            None => return self.user_select(content, Some(content.len_filtered() - 1)),
+            Some(idx) => idx.min(content.len_filtered() - 1),
         };
         let current_item = &content[idx];
 
@@ -110,7 +114,7 @@ impl<T> TableView<T>
                     other => other.saturating_sub(1),
                 },
                 Dir::Next => match idx + 1 {
-                    c if c >= content.len() => {
+                    c if c >= content.len_filtered() => {
                         return;
                     }
                     c => c,
@@ -124,20 +128,21 @@ impl<T> TableView<T>
         }
     }
 
-    pub fn user_select(&mut self, content: &[T], idx: Option<usize>)
+    pub fn user_select(&mut self, content: &IndexedVec<T>, idx: Option<usize>)
     {
+        self.unlock();
         match idx {
             None => {
                 self.user_selected = None;
-                if content.is_empty() {
+                if content.is_empty_filtered() {
                     self.tui_state.select(None);
                 } else {
-                    self.tui_state.select(Some(content.len() - 1));
+                    self.tui_state.select(Some(content.len_filtered() - 1));
                 }
             }
             Some(mut idx) => {
-                if idx >= content.len() {
-                    idx = content.len() - 1;
+                if idx >= content.len_filtered() {
+                    idx = content.len_filtered() - 1;
                 }
                 self.user_selected = Some(idx);
                 self.tui_state.select(self.user_selected);
@@ -145,7 +150,7 @@ impl<T> TableView<T>
         }
     }
 
-    pub fn auto_select(&mut self, content: &[T], idx: Option<usize>)
+    pub fn auto_select(&mut self, content: &IndexedVec<T>, idx: Option<usize>)
     {
         // If the user has selected something, skip the auto select. The user select will override
         // this.
@@ -154,30 +159,52 @@ impl<T> TableView<T>
         }
 
         let selection = match idx {
-            Some(idx) if idx >= content.len() => Some(content.len() - 1),
-            None if content.is_empty() => None,
-            None => Some(content.len() - 1),
+            Some(idx) if idx >= content.len_filtered() => Some(content.len_filtered() - 1),
+            None if content.is_empty_filtered() => None,
+            None => Some(content.len_filtered() - 1),
             some => some,
         };
 
         self.tui_state.select(selection);
     }
 
-    pub fn selected<'a>(&self, content: &'a [T]) -> Option<&'a T>
+    pub fn selected<'a>(&self, content: &'a IndexedVec<T>) -> Option<&'a T>
     {
         self.tui_state.selected().and_then(|idx| content.get(idx))
     }
 
+    fn ensure_current_selection<'a>(&mut self, content: &'a IndexedVec<T>) -> Option<&'a T>
+    {
+        let currently_selected = self.selected(content);
+        let lock = match self.locked {
+            Some(l) => l,
+            None => return currently_selected,
+        };
+
+        // If the current selection matches the lock there's no need to do anything.
+        // This is a slight optimization to avoid having to find the item every single time.
+        if let Some(selected) = currently_selected {
+            if selected.key() == lock {
+                return Some(selected);
+            }
+        }
+
+        let idx = content.get_index_by_uuid(lock);
+        self.user_selected = idx;
+        self.tui_state.select(idx);
+        self.selected(content)
+    }
+
     pub fn draw_requests<B: Backend>(
         &mut self,
-        content: &[T],
+        content: &IndexedVec<T>,
         f: &mut Frame<B>,
         chunk: Rect,
         is_active: bool,
     )
     {
+        let currently_selected = self.ensure_current_selection(content);
         let block = create_block(&self.title, is_active);
-        let currently_selected = self.selected(content);
 
         // Get a borrow of columns to avoid having to use `self` within the closure below.
         let columns = &self.columns;
@@ -212,5 +239,17 @@ impl<T> TableView<T>
         .highlight_style(Style::default().modifier(Modifier::BOLD));
 
         f.render_stateful_widget(table, chunk, &mut self.tui_state)
+    }
+
+    pub fn unlock(&mut self)
+    {
+        self.locked = None;
+    }
+
+    pub fn lock(&mut self, content: &IndexedVec<T>)
+    {
+        if let Some(item) = self.selected(content) {
+            self.locked = Some(item.key())
+        }
     }
 }

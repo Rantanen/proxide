@@ -14,4 +14,8 @@ pub trait View<B: Backend>
     fn on_input(&mut self, ctx: &UiContext, e: CTEvent, size: Rect) -> HandleResult<B>;
     fn on_change(&mut self, ctx: &UiContext, change: &SessionChange) -> bool;
     fn help_text(&self, state: &UiContext, size: Rect) -> String;
+    fn transparent(&self) -> bool
+    {
+        false
+    }
 }

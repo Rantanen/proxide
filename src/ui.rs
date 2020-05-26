@@ -14,6 +14,7 @@ use crate::decoders::DecoderFactory;
 use crate::session::events::SessionEvent;
 
 mod controls;
+mod menus;
 pub mod prelude;
 mod state;
 pub mod toast;
@@ -53,9 +54,9 @@ pub fn main(
     let mut terminal = Terminal::new(backend).context(IoError {})?;
     terminal.hide_cursor().context(IoError {})?;
 
-    let mut state = ProxideUi::new(session, decoders, terminal.size().unwrap());
-
     let (ui_tx, ui_rx) = std::sync::mpsc::channel();
+
+    let mut state = ProxideUi::new(session, ui_tx.clone(), decoders, terminal.size().unwrap());
 
     let toast_tx = ui_tx.clone();
     thread::spawn(move || {
@@ -93,6 +94,8 @@ pub fn main(
         match state.handle(e) {
             HandleResult::PushView(..) => unreachable!("PushView is handled by the state"),
             HandleResult::ExitView => unreachable!("ExitView is handled by the state"),
+            HandleResult::OpenMenu(..) => unreachable!("PushMenu is handled by the state"),
+            HandleResult::ExitMenu => unreachable!("ExitMenu is handled by the state"),
             HandleResult::Ignore => {}
             HandleResult::Update => terminal.draw(|f| state.draw(f)).unwrap(),
             HandleResult::Quit => break,
