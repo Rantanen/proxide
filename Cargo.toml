@@ -3,7 +3,7 @@ name = "proxide"
 version = "0.1.1"
 authors = ["Mikko Rantanen <jubjub@jubjubnest.net>"]
 edition = "2018"
-license = "GPL-3.0-only"
+license = "MIT OR Apache-2.0"
 description = """
 Proxide is a debugging proxy for capturing HTTP/2 and gRPC traffic.
 """
