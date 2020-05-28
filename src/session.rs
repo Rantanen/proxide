@@ -199,6 +199,12 @@ impl<T> IndexedVec<T>
         self.refilter();
     }
 
+    pub fn clear_filters(&mut self)
+    {
+        self.filters.clear();
+        self.refilter();
+    }
+
     fn refilter(&mut self)
     {
         self.filtered_items = self

@@ -100,14 +100,14 @@ impl GrpcDecoder
         Self { msg_ref, ctx: rc }
     }
 
-    fn get_messages(&self, b: &[u8]) -> Result<Vec<MessageValue>, String>
+    fn get_messages(&self, b: &[u8]) -> Vec<MessageValue>
     {
         let mut cursor = 0;
         let mut values = vec![];
         while b.len() >= cursor + 5 {
             let compressed = b[cursor];
             if compressed != 0 {
-                return Err("Compressed messages are not supported".to_string());
+                return vec![];
             }
 
             let len = ((b[cursor + 1] as usize) << 24)
@@ -124,7 +124,7 @@ impl GrpcDecoder
             cursor += len;
         }
 
-        Ok(values)
+        values
     }
 }
 impl Decoder for GrpcDecoder
@@ -140,7 +140,7 @@ impl Decoder for GrpcDecoder
             output.push(Text::raw("\n"));
         }
 
-        for v in &self.get_messages(&msg.content).unwrap() {
+        for v in &self.get_messages(&msg.content) {
             output.append(&mut v.to_text(&self.ctx, 0));
             output.push(Text::raw("\n"));
         }
@@ -154,11 +154,21 @@ impl Decoder for GrpcDecoder
         }
         output
     }
+
+    fn index(&self, msg: &MessageData) -> Vec<String>
+    {
+        self.get_messages(&msg.content)
+            .into_iter()
+            .flat_map(|msg| msg.to_index(&self.ctx))
+            .collect()
+    }
 }
 
 trait ToText
 {
     fn to_text<'a>(&self, ctx: &'a Context, indent: usize) -> Vec<Text<'a>>;
+
+    fn to_index(&self, ctx: &Context) -> Vec<String>;
 }
 
 impl ToText for protofish::decode::MessageValue
@@ -185,6 +195,20 @@ impl ToText for protofish::decode::MessageValue
         v.push(Text::raw(format!("{}}}", "  ".repeat(indent))));
         v
     }
+
+    fn to_index(&self, ctx: &Context) -> Vec<String>
+    {
+        let msg = ctx.resolve_message(self.msg_ref);
+        std::iter::once(msg.name.clone())
+            .chain(self.fields.iter().flat_map(|field| {
+                msg.fields
+                    .get(&field.number)
+                    .map(|f| f.name.clone())
+                    .into_iter()
+                    .chain(field.value.to_index(ctx))
+            }))
+            .collect()
+    }
 }
 
 impl ToText for protofish::decode::EnumValue
@@ -197,6 +221,16 @@ impl ToText for protofish::decode::EnumValue
         match e.field_by_value(self.value) {
             Some(field) => vec![Text::raw(&field.name)],
             None => vec![Text::raw(self.value.to_string())],
+        }
+    }
+
+    fn to_index(&self, ctx: &Context) -> Vec<String>
+    {
+        let e = ctx.resolve_enum(self.enum_ref);
+
+        match e.field_by_value(self.value) {
+            Some(field) => vec![field.name.to_string()],
+            None => vec![],
         }
     }
 }
@@ -230,6 +264,34 @@ impl ToText for protofish::decode::Value
             Self::Incomplete(bytes) => Text::raw(format!("Incomplete({:X})", bytes)),
         }]
     }
+
+    fn to_index(&self, ctx: &Context) -> Vec<String>
+    {
+        vec![match self {
+            Self::Double(v) => format!("{}", v),
+            Self::Float(v) => format!("{}", v),
+            Self::Int32(v) => format!("{}", v),
+            Self::Int64(v) => format!("{}", v),
+            Self::UInt32(v) => format!("{}", v),
+            Self::UInt64(v) => format!("{}", v),
+            Self::SInt32(v) => format!("{}", v),
+            Self::SInt64(v) => format!("{}", v),
+            Self::Fixed32(v) => format!("{}", v),
+            Self::Fixed64(v) => format!("{}", v),
+            Self::SFixed32(v) => format!("{}", v),
+            Self::SFixed64(v) => format!("{}", v),
+            Self::Bool(v) => format!("{}", v),
+            Self::String(v) => format!("{:?}", v),
+            Self::Bytes(v) => format!("{:?}", v),
+            Self::Packed(v) => return v.to_index(ctx),
+
+            Self::Enum(v) => return v.to_index(ctx),
+            Self::Message(v) => return v.to_index(ctx),
+
+            Self::Unknown(unk) => format!("!! {:?}", unk),
+            Self::Incomplete(bytes) => format!("Incomplete({:X})", bytes),
+        }]
+    }
 }
 
 impl ToText for protofish::decode::PackedArray
@@ -260,5 +322,26 @@ impl ToText for protofish::decode::PackedArray
         output.push(Text::raw(v.join(", ")));
         output.push(Text::raw(" ]"));
         output
+    }
+
+    fn to_index<'a>(&self, _ctx: &'a Context) -> Vec<String>
+    {
+        let v: Vec<_> = match self {
+            Self::Double(v) => v.iter().map(ToString::to_string).collect(),
+            Self::Float(v) => v.iter().map(ToString::to_string).collect(),
+            Self::Int32(v) => v.iter().map(ToString::to_string).collect(),
+            Self::Int64(v) => v.iter().map(ToString::to_string).collect(),
+            Self::UInt32(v) => v.iter().map(ToString::to_string).collect(),
+            Self::UInt64(v) => v.iter().map(ToString::to_string).collect(),
+            Self::SInt32(v) => v.iter().map(ToString::to_string).collect(),
+            Self::SInt64(v) => v.iter().map(ToString::to_string).collect(),
+            Self::Fixed32(v) => v.iter().map(ToString::to_string).collect(),
+            Self::Fixed64(v) => v.iter().map(ToString::to_string).collect(),
+            Self::SFixed32(v) => v.iter().map(ToString::to_string).collect(),
+            Self::SFixed64(v) => v.iter().map(ToString::to_string).collect(),
+            Self::Bool(v) => v.iter().map(ToString::to_string).collect(),
+        };
+
+        v
     }
 }

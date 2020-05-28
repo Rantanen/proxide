@@ -1,4 +1,6 @@
 use crossterm::event::{Event as CrosstermEvent, KeyCode};
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::sync::mpsc::Sender;
 use tui::backend::Backend;
 use tui::buffer::Buffer;
@@ -9,9 +11,11 @@ use tui::widgets::{Block, Borders, Clear, Paragraph, Text, Widget};
 use uuid::Uuid;
 
 use super::toast::ToastEvent;
-use crate::decoders::DecoderFactory;
+use crate::decoders::Decoders;
+use crate::search;
 use crate::session::events::SessionEvent;
 use crate::session::*;
+use crate::ui::commands;
 use crate::ui::menus::Menu;
 use crate::ui::views::{self, View};
 
@@ -28,6 +32,7 @@ pub struct ProxideUi<B>
     pub ui_stack: Vec<Box<dyn View<B>>>,
     pub menu_stack: Vec<Box<dyn Menu<B>>>,
     pub toasts: Vec<Toast>,
+    pub input_command: Option<commands::CommandState>,
 }
 
 pub struct Toast
@@ -39,7 +44,8 @@ pub struct Toast
 
 pub struct Runtime
 {
-    pub decoder_factories: Vec<Box<dyn DecoderFactory>>,
+    pub decoders: Decoders,
+    pub search_index: Rc<RefCell<search::SearchIndex>>,
     pub tx: Sender<UiEvent>,
 }
 
@@ -59,29 +65,29 @@ pub enum HandleResult<B: Backend>
     PushView(Box<dyn View<B>>),
     ExitView,
     ExitMenu,
+    ExitCommand,
 }
 
 impl<B: Backend> ProxideUi<B>
 {
-    pub fn new(
-        session: Session,
-        tx: Sender<UiEvent>,
-        decoders: Vec<Box<dyn DecoderFactory>>,
-        size: Rect,
-    ) -> Self
+    pub fn new(session: Session, tx: Sender<UiEvent>, decoders: Decoders, size: Rect) -> Self
     {
         Self {
             context: UiContext {
-                data: session,
                 runtime: Runtime {
-                    decoder_factories: decoders,
+                    search_index: Rc::new(RefCell::new(search::SearchIndex::new(
+                        &session, &decoders,
+                    ))),
+                    decoders,
                     tx,
                 },
+                data: session,
                 size,
             },
             ui_stack: vec![Box::new(views::MainView::default())],
             menu_stack: vec![],
             toasts: vec![],
+            input_command: None,
         }
     }
 
@@ -89,6 +95,16 @@ impl<B: Backend> ProxideUi<B>
     {
         match e {
             UiEvent::SessionEvent(e) => {
+                // Capture the index request so we know to do indexing after the session has been
+                // updated.
+                let index_request = match &*e {
+                    SessionEvent::MessageDone(msg) => Some(search::IndexRequest::Message {
+                        request: msg.uuid,
+                        part: msg.part,
+                    }),
+                    _ => None,
+                };
+
                 let results: Vec<_> = self
                     .context
                     .data
@@ -101,6 +117,15 @@ impl<B: Backend> ProxideUi<B>
                             .on_change(&self.context, &change)
                     })
                     .collect();
+
+                if let Some(ixreq) = index_request {
+                    self.context.runtime.search_index.borrow_mut().index(
+                        &self.context.data,
+                        &self.context.runtime.decoders,
+                        ixreq,
+                    );
+                }
+
                 match results.into_iter().any(|b| b) {
                     true => HandleResult::Update,
                     false => HandleResult::Ignore,
@@ -123,7 +148,9 @@ impl<B: Backend> ProxideUi<B>
 
     fn on_input(&mut self, e: CrosstermEvent, size: Rect) -> HandleResult<B>
     {
-        let result = if let Some(menu) = self.menu_stack.last_mut() {
+        let result = if let Some(cmd) = &mut self.input_command {
+            cmd.on_input(&mut self.context, e)
+        } else if let Some(menu) = self.menu_stack.last_mut() {
             menu.on_input(&mut self.context, e)
         } else {
             self.ui_stack
@@ -152,6 +179,10 @@ impl<B: Backend> ProxideUi<B>
                 self.menu_stack.pop();
                 return HandleResult::Update;
             }
+            HandleResult::ExitCommand => {
+                self.input_command = None;
+                return HandleResult::Update;
+            }
         }
 
         match e {
@@ -165,6 +196,28 @@ impl<B: Backend> ProxideUi<B>
                 HandleResult::Update
             }
             CrosstermEvent::Key(key) => match key.code {
+                KeyCode::Char(':') => {
+                    self.input_command = Some(commands::CommandState {
+                        help: "Enter command".to_string(),
+                        prompt: ":".to_string(),
+                        input: Default::default(),
+                        text_cursor: 0,
+                        display_cursor: 0,
+                        executable: Box::new(commands::ColonCommand),
+                    });
+                    HandleResult::Update
+                }
+                KeyCode::Char('/') => {
+                    self.input_command = Some(commands::CommandState {
+                        help: "Search".to_string(),
+                        prompt: "/".to_string(),
+                        input: Default::default(),
+                        text_cursor: 0,
+                        display_cursor: 0,
+                        executable: Box::new(commands::SearchCommand),
+                    });
+                    HandleResult::Update
+                }
                 KeyCode::Char('Q') => HandleResult::Quit,
                 KeyCode::Esc => {
                     if self.ui_stack.len() > 1 {
@@ -178,7 +231,20 @@ impl<B: Backend> ProxideUi<B>
         }
     }
 
-    pub fn draw(&mut self, mut f: Frame<B>)
+    pub fn draw(&mut self, terminal: &mut tui::Terminal<B>) -> std::io::Result<()>
+    {
+        terminal.hide_cursor()?;
+        terminal.draw(|f| self.draw_views(f))?;
+
+        if let Some(cmd) = &self.input_command {
+            let x = cmd.cursor();
+            terminal.set_cursor(x + 2, terminal.size()?.height - 1)?;
+            terminal.show_cursor()?;
+        }
+        Ok(())
+    }
+
+    pub fn draw_views(&mut self, mut f: Frame<B>)
     {
         let chunk = f.size();
 
@@ -195,12 +261,14 @@ impl<B: Backend> ProxideUi<B>
         }
 
         for i in idx..self.ui_stack.len() {
-            &mut self.ui_stack[i].draw(&self.context, &mut f, view_chunk);
+            self.ui_stack[i].draw(&self.context, &mut f, view_chunk);
         }
 
         // The bottom area is reserved for menus or help text depending on
         // whether a menu is up.
-        let help_text = if let Some(menu) = self.menu_stack.last() {
+        let help_text = if let Some(cmd) = &self.input_command {
+            format!("{}\n{}{}", cmd.help, cmd.prompt, cmd.input)
+        } else if let Some(menu) = self.menu_stack.last() {
             menu.help_text(&self.context)
         } else {
             let view = self.ui_stack.last_mut().unwrap();

@@ -10,14 +10,15 @@ use std::{
 };
 use tui::{backend::CrosstermBackend, Terminal};
 
-use crate::decoders::DecoderFactory;
+use crate::decoders::Decoders;
 use crate::session::events::SessionEvent;
 
+mod commands;
 mod controls;
 mod menus;
-pub mod prelude;
+mod prelude;
 mod state;
-pub mod toast;
+mod toast;
 mod views;
 
 use state::{HandleResult, ProxideUi, UiEvent};
@@ -43,7 +44,7 @@ pub type Result<S, E = Error> = std::result::Result<S, E>;
 
 pub fn main(
     session: crate::session::Session,
-    decoders: Vec<Box<dyn DecoderFactory>>,
+    decoders: Decoders,
     session_rx: mpsc::Receiver<SessionEvent>,
 ) -> Result<()>
 {
@@ -88,7 +89,7 @@ pub fn main(
     });
 
     // Ensure the UI is drawn at least once even if no events come in.
-    terminal.draw(|f| state.draw(f)).unwrap();
+    state.draw(&mut terminal).context(IoError {})?;
     loop {
         let e = ui_rx.recv().unwrap();
         match state.handle(e) {
@@ -96,8 +97,9 @@ pub fn main(
             HandleResult::ExitView => unreachable!("ExitView is handled by the state"),
             HandleResult::OpenMenu(..) => unreachable!("PushMenu is handled by the state"),
             HandleResult::ExitMenu => unreachable!("ExitMenu is handled by the state"),
+            HandleResult::ExitCommand => unreachable!("ExitCommand is handled by the state"),
             HandleResult::Ignore => {}
-            HandleResult::Update => terminal.draw(|f| state.draw(f)).unwrap(),
+            HandleResult::Update => state.draw(&mut terminal).context(IoError {})?,
             HandleResult::Quit => break,
         }
     }

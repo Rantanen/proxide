@@ -13,6 +13,7 @@ use tokio::sync::oneshot;
 mod connection;
 mod decoders;
 mod error;
+mod search;
 mod session;
 mod ui;
 
@@ -183,7 +184,7 @@ fn main() -> Result<(), Error>
     let mut decoders = vec![];
     decoders.push(decoders::raw::initialize(&matches).context(DecoderError {})?);
     decoders.push(decoders::grpc::initialize(&matches).context(DecoderError {})?);
-    let decoders = decoders.into_iter().filter_map(|o| o).collect();
+    let decoders = decoders::Decoders::new(decoders.into_iter().filter_map(|o| o));
 
     // Run the UI on the current thread.
     //

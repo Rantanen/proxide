@@ -62,16 +62,9 @@ impl MessageView
         message: &MessageData,
     ) -> Box<dyn Decoder>
     {
-        let decoders: Vec<Box<dyn Decoder>> = ctx
-            .runtime
-            .decoder_factories
-            .iter()
-            .map(|d| d.try_create(request, message))
-            .filter_map(|o| o)
-            .collect();
-
-        decoders
-            .into_iter()
+        ctx.runtime
+            .decoders
+            .get_decoders(request, message)
             .last()
             .expect("Raw decoder should always be present")
     }

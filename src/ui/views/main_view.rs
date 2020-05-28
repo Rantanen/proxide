@@ -1,13 +1,12 @@
-use chrono::prelude::*;
 use tui::layout::{Constraint, Direction, Layout, Rect};
 
 use super::prelude::*;
 use super::{DetailsView, MessageView};
 use crate::session::{EncodedRequest, RequestPart};
 
+use crate::ui::commands;
 use crate::ui::controls::TableView;
 use crate::ui::menus::FilterMenu;
-use crate::ui::toast;
 
 #[derive(PartialEq)]
 pub enum Window
@@ -124,19 +123,16 @@ impl<B: Backend> View<B> for MainView
                         return self.create_message_view(ctx, RequestPart::Response)
                     }
                     KeyCode::Char('f') => {
-                        return self
-                            .requests_state
-                            .selected(&ctx.data.requests)
-                            .map(|request| {
-                                self.requests_state.lock(&ctx.data.requests);
-                                HandleResult::OpenMenu(Box::new(FilterMenu {
-                                    request: request.request_data.uuid,
-                                }))
-                            })
-                            .unwrap_or_else(|| HandleResult::Ignore)
+                        self.requests_state.lock(&ctx.data.requests);
+                        return HandleResult::OpenMenu(Box::new(FilterMenu {
+                            request: self
+                                .requests_state
+                                .selected(&ctx.data.requests)
+                                .map(|request| request.request_data.uuid),
+                        }));
                     }
                     KeyCode::F(12) => {
-                        self.export(ctx);
+                        commands::export_session(ctx);
                         return HandleResult::Ignore;
                     }
                     _ => return HandleResult::Ignore,
@@ -174,15 +170,6 @@ impl<B: Backend> View<B> for MainView
 
 impl MainView
 {
-    fn export(&self, ctx: &UiContext)
-    {
-        let filename = format!("session-{}.txt", Local::now().format("%H_%M_%S"));
-        match ctx.data.write_to_file(&filename) {
-            Ok(_) => toast::show_message(format!("Exported session to '{}'", filename)),
-            Err(e) => toast::show_error(e.to_string()),
-        }
-    }
-
     fn create_message_view<B: Backend>(&self, ctx: &UiContext, part: RequestPart)
         -> HandleResult<B>
     {
