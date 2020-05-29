@@ -44,14 +44,17 @@ pub enum Error
 
 fn main() -> Result<(), Error>
 {
-    simplelog::WriteLogger::init(
-        simplelog::LevelFilter::Trace,
-        simplelog::ConfigBuilder::new()
-            .add_filter_allow("proxide".to_string())
-            .build(),
-        std::fs::File::create("trace.log").unwrap(),
-    )
-    .unwrap();
+    #[cfg(debug_assertions)]
+    {
+        simplelog::WriteLogger::init(
+            simplelog::LevelFilter::Trace,
+            simplelog::ConfigBuilder::new()
+                .add_filter_allow("proxide".to_string())
+                .build(),
+            std::fs::File::create("trace.log").unwrap(),
+        )
+        .unwrap();
+    }
 
     // Set up the monitor and view commands separately.
     //
