@@ -1,0 +1,175 @@
+name: Release
+on:
+  push:
+    tags:
+      - '[0-9]+.[0-9]+.[0-9]+'
+    branches:
+      - 'release-test-[0-9]+.[0-9]+.[0-9]+'
+
+
+jobs:
+
+  # This job is responsible for creating the release _once_ for each tag.
+  create-release:
+    name: Create release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      - name: Get release version
+        run: |
+          echo "Ref: $GITHUB_REF"
+          ref_no_tag=${GITHUB_REF#refs/tags/}
+          echo "No tag: $ref_no_tag"
+          proxide_version=${ref_no_tag#refs/heads/release-test-}
+
+          echo "Final: $proxide_version"
+          echo "::set-env name=PROXIDE_VERSION::${proxide_version}"
+          echo "Version: ${{ env.PROXIDE_VERSION }}"
+
+
+          if [[ $GITHUB_REF == *"release-test"* ]]; then
+            echo "Release test"
+          else
+            echo "Normal release"
+            echo "::set-env name=REAL_RELEASE::true"
+          fi
+
+
+      - name: Version check
+        run: |
+          toml_version="$(head Cargo.toml | grep "^version" | sed 's/.*"\(.*\)".*/\1/')"
+          if [ "$toml_version" != "${{ env.PROXIDE_VERSION }}" ]; then
+            echo "Version mismatch!"
+            echo "Tag:   ${{ env.PROXIDE_VERSION }}"
+            echo "Crate: $toml_version"
+            exit 1
+          else
+            echo "TOML and Git versions match"
+          fi
+
+      - name: Create GitHub release
+        id: release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref }}
+          release_name: ${{ env.PROXIDE_VERSION }}
+
+      - name: Create artifacts
+        run: |
+          mkdir artifacts
+          echo "${{ steps.release.outputs.upload_url }}" > artifacts/release-upload-url
+          echo "${{ env.PROXIDE_VERSION }}" > artifacts/release-version
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v1
+        with:
+          name: artifacts
+          path: artifacts
+
+  # This job builds each release and uploads the artifacts to the release
+  # created during the create-release job.
+  build-release:
+    name: Build release
+    needs: ['create-release']
+    env:
+      RUST_BACKTRACE: 1
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-2019
+    steps:
+
+      - name: Get release details
+        uses: actions/download-artifact@v1
+        with:
+          name: artifacts
+          path: artifacts
+
+      - name: Read release details
+        shell: bash
+        run: |
+          release_upload_url="$(cat artifacts/release-upload-url)"
+          echo "::set-env name=RELEASE_UPLOAD_URL::$release_upload_url"
+          release_version="$(cat artifacts/release-version)"
+          echo "::set-env name=RELEASE_VERSION::$release_version"
+          echo "Release upload url: $release_upload_url"
+          echo "Release version: $release_version"
+
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      - name: Install toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          profile: minimal
+          override: true
+
+      - name: Environment
+        run: |
+          cargo --version
+          rustc --version
+
+      - name: Build release
+        run: |
+          cargo build --release
+
+      - name: Gather artifacts
+        shell: bash
+        run: |
+          target="proxide-${{ env.RELEASE_VERSION }}"
+          asset_name="proxide-${{ env.RELEASE_VERSION }}"
+
+          mkdir -p $target
+
+          cp {README.md,LICENSE-MIT,LICENSE-APACHE} $target
+
+          if [ "$RUNNER_OS" == "Windows" ]; then
+            cp target/release/proxide.exe $target
+            7z a "$asset_name.zip" $target
+            echo "::set-env name=ASSET::$asset_name.zip"
+          else
+            cp target/release/proxide $target
+            tar czf "$asset_name.tar.gz" $target
+            echo "::set-env name=ASSET::$asset_name.tar.gz"
+          fi
+
+      - name: Upload release
+        uses: actions/upload-release-asset@v1.0.1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ env.RELEASE_UPLOAD_URL }}
+          asset_path: ${{ env.ASSET }}
+          asset_name: ${{ env.ASSET }}
+          asset_content_type: application/octet-stream
+
+  publish-release:
+    name: Publish release
+    needs: ['build-release']
+    env:
+      RUST_BACKTRACE: 1
+    runs-on: ubuntu-latest
+    steps:
+
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      - name: Install toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          profile: minimal
+          override: true
+
+      - name: Publish to crates.io
+        if: env.REAL_RELEASE == 'true'
+        run: |
+          cargo publish --token "${{ secrets.crates_io }}"
