@@ -1,0 +1,63 @@
+name: CI
+on:
+  pull_request:
+  push:
+    branches:
+    - master
+    - ci
+
+jobs:
+
+  test:
+    name: test
+    env:
+      RUST_BACKTRACE: 1
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-2019
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      - name: Install toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          profile: minimal
+          override: true
+
+      - name: Environment
+        run: |
+          cargo --version
+          rustc --version
+
+      - name: Build
+        run: cargo build
+
+  style:
+    name: rustfmt
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+      - name: Install toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: nightly
+          profile: minimal
+          override: true
+          components: rustfmt, clippy
+      - name: Environment
+        run: |
+          cargo --version
+          cargo fmt -- --version
+          cargo clippy -- --version
+      - name: Run rustfmt
+        run: |
+          cargo fmt --all -- --check
+      - name: Run clippy
+        run: |
+          cargo clippy --all -- -D warnings
