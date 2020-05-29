@@ -117,7 +117,7 @@ impl HeaderDecoder
 
         if !msg.trailers.is_empty() {
             output.extend(title("\nTrailers\n"));
-            for (k, v) in &msg.headers {
+            for (k, v) in &msg.trailers {
                 output.push(ctor(k, v));
             }
         }
