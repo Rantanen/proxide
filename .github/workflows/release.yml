@@ -32,7 +32,7 @@ jobs:
 
           if [[ $GITHUB_REF == *"release-test"* ]]; then
             echo "Release test"
-            echo "::set-env name=REAL_RELEASE::false"
+            echo "::set-env name=REAL_RELEASE::true"
           else
             echo "Normal release"
             echo "::set-env name=REAL_RELEASE::true"
