@@ -91,7 +91,7 @@ impl<B: Backend> View<B> for MessageView
         };
 
         let request_title = format!("{} ({} bytes{})", title, data.content.len(), duration);
-        let block = create_block(&request_title, false);
+        let block = create_block(&request_title);
 
         let (request, message) = match self.get_message(ctx) {
             Some(t) => t,

@@ -9,13 +9,9 @@ pub use crate::ui::state::{HandleResult, UiContext};
 
 use chrono::Duration;
 
-pub fn create_block(title: &str, active: bool) -> Block
+pub fn create_block(title: &str) -> Block
 {
-    let mut block = Block::default().title(title).borders(Borders::ALL);
-    if active {
-        block = block.border_type(tui::widgets::BorderType::Thick);
-    }
-    block
+    Block::default().title(title).borders(Borders::ALL)
 }
 
 pub fn format_duration(d: Duration) -> String

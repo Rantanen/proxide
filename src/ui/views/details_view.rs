@@ -14,7 +14,7 @@ impl<B: Backend> View<B> for DetailsView
 {
     fn draw(&mut self, ctx: &UiContext, f: &mut Frame<B>, chunk: Rect)
     {
-        self.draw_control(self.request, ctx, f, chunk, false)
+        self.draw_control(self.request, ctx, f, chunk)
     }
 
     fn on_input(&mut self, _session: &UiContext, _e: CTEvent, _size: Rect) -> HandleResult<B>
@@ -46,7 +46,6 @@ impl DetailsView
         ctx: &UiContext,
         f: &mut Frame<B>,
         chunk: Rect,
-        is_active: bool,
     )
     {
         let request = match ctx.data.requests.get_by_uuid(request) {
@@ -54,7 +53,7 @@ impl DetailsView
             None => return,
         };
 
-        let block = create_block("[D]etails", is_active);
+        let block = create_block("Details");
         f.render_widget(block, chunk);
 
         let details_chunks = Layout::default()

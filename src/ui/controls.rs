@@ -200,11 +200,10 @@ impl<T: crate::session::HasKey> TableView<T>
         content: &IndexedVec<T>,
         f: &mut Frame<B>,
         chunk: Rect,
-        is_active: bool,
     )
     {
         let currently_selected = self.ensure_current_selection(content);
-        let block = create_block(&self.title, is_active);
+        let block = create_block(&self.title);
 
         // Get a borrow of columns to avoid having to use `self` within the closure below.
         let columns = &self.columns;

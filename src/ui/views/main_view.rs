@@ -8,26 +8,10 @@ use crate::ui::commands;
 use crate::ui::controls::TableView;
 use crate::ui::menus::FilterMenu;
 
-#[derive(PartialEq)]
-pub enum Window
-{
-    Requests,
-    Details,
-}
-
 pub struct MainView
 {
     details_view: DetailsView,
     requests_state: TableView<EncodedRequest>,
-    active_window: Window,
-}
-
-impl Default for Window
-{
-    fn default() -> Self
-    {
-        Self::Requests
-    }
 }
 
 impl Default for MainView
@@ -36,7 +20,7 @@ impl Default for MainView
     {
         Self {
             details_view: DetailsView::default(),
-            requests_state: TableView::<EncodedRequest>::new("[R]equests")
+            requests_state: TableView::<EncodedRequest>::new("Requests")
                 .with_group_filter(|current, maybe| {
                     current.request_data.connection_uuid == maybe.request_data.connection_uuid
                 })
@@ -60,7 +44,6 @@ impl Default for MainView
                 .with_column("St.", Constraint::Length(5), |item| {
                     item.request_data.status.to_string()
                 }),
-            active_window: Window::Requests,
         }
     }
 }
@@ -83,39 +66,25 @@ impl<B: Backend> View<B> for MainView
             .split(chunk);
 
         // state.connections.draw(&mut f, chunks[0]);
-        self.requests_state.draw_requests(
-            &ctx.data.requests,
-            f,
-            chunks[0],
-            self.active_window == Window::Requests,
-        );
+        self.requests_state
+            .draw_requests(&ctx.data.requests, f, chunks[0]);
 
         if let Some(request) = self.requests_state.selected(&ctx.data.requests) {
-            self.details_view.draw_control(
-                request.request_data.uuid,
-                ctx,
-                f,
-                chunks[1],
-                self.active_window == Window::Details,
-            );
+            self.details_view
+                .draw_control(request.request_data.uuid, ctx, f, chunks[1]);
         }
     }
 
     fn on_input(&mut self, ctx: &UiContext, e: CTEvent, size: Rect) -> HandleResult<B>
     {
-        // Handle active window input first.
-        let handled = match self.active_window {
-            Window::Requests => self
-                .requests_state
-                .on_input::<B>(&ctx.data.requests, e, size),
-            Window::Details => HandleResult::Ignore,
-        };
+        // Handle the request control first.
+        let handled = self
+            .requests_state
+            .on_input::<B>(&ctx.data.requests, e, size);
 
         if let HandleResult::Ignore = handled {
             match e {
                 CTEvent::Key(key) => match key.code {
-                    KeyCode::Char('r') => self.active_window = Window::Requests,
-                    KeyCode::Char('d') => self.active_window = Window::Details,
                     KeyCode::Char('q') => {
                         return self.create_message_view(ctx, RequestPart::Request)
                     }
