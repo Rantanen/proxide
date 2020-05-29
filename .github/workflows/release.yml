@@ -58,6 +58,8 @@ jobs:
         with:
           tag_name: ${{ github.ref }}
           release_name: ${{ env.PROXIDE_VERSION }}
+          body: |
+            See the [commit log](https://github.com/Rantanen/proxide/commit/${{ github.sha }}) for recent changes.
 
       - name: Create artifacts
         run: |
