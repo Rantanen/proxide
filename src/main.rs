@@ -73,9 +73,9 @@ fn main() -> Result<(), Error>
         .arg(
             Arg::with_name("target")
                 .short("t")
-                .value_name("port")
+                .value_name("host:port")
                 .required(true)
-                .help("Specify target port")
+                .help("Specify target host and port")
                 .takes_value(true),
         );
 
@@ -115,9 +115,9 @@ fn main() -> Result<(), Error>
                 .arg(
                     Arg::with_name("target")
                         .short("t")
-                        .value_name("port")
+                        .value_name("host:port")
                         .required(true)
-                        .help("Specify target port")
+                        .help("Specify target host and port")
                         .takes_value(true),
                 ),
         );
