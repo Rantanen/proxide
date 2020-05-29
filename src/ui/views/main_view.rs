@@ -163,7 +163,7 @@ impl<B: Backend> View<B> for MainView
     fn help_text(&self, _state: &UiContext, _size: Rect) -> String
     {
         format!("{}\n{}",
-            "[Up/Down,j/k]: Previous/Next request ([Shift]: Follow connection); [F12]: Export session to file",
+            "[Up/Down,j/k]: Previous/Next request ([Shift]: Follow connection); [F12]: Export session to file; [Shift-Q]: Quit",
             "[F]: Manage filters")
     }
 }
