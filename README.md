@@ -2,6 +2,7 @@
 ### HTTP2/gRPC Debugging Proxy
 
 [![crates.io](https://img.shields.io/crates/v/proxide.svg)](https://crates.io/crates/proxide)
+[![CI](https://github.com/Rantanen/proxide/workflows/CI/badge.svg)](https://github.com/Rantanen/proxide/actions?query=workflow%3ACI+branch%3Amaster)
 
 ![Demo](images/proxide.gif)
 
