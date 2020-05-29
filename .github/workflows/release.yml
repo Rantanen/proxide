@@ -32,6 +32,7 @@ jobs:
 
           if [[ $GITHUB_REF == *"release-test"* ]]; then
             echo "Release test"
+            echo "::set-env name=REAL_RELEASE::false"
           else
             echo "Normal release"
             echo "::set-env name=REAL_RELEASE::true"
@@ -64,6 +65,7 @@ jobs:
       - name: Create artifacts
         run: |
           mkdir artifacts
+          echo "${{ env.REAL_RELEASE }}" > artifacts/real-release
           echo "${{ steps.release.outputs.upload_url }}" > artifacts/release-upload-url
           echo "${{ env.PROXIDE_VERSION }}" > artifacts/release-version
 
@@ -160,6 +162,19 @@ jobs:
       RUST_BACKTRACE: 1
     runs-on: ubuntu-latest
     steps:
+
+      - name: Get release details
+        uses: actions/download-artifact@v1
+        with:
+          name: artifacts
+          path: artifacts
+
+      - name: Read release details
+        shell: bash
+        run: |
+          real_release="$(cat artifacts/real-release)"
+          echo "Real release: $real_release"
+          echo "::set-env name=REAL_RELEASE::$real_release"
 
       - name: Checkout
         uses: actions/checkout@v2
