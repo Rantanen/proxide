@@ -15,6 +15,11 @@ namespace DotNetGrpc
     {
         static void Main( string[] args )
         {
+            // Environment.SetEnvironmentVariable( "http_proxy", "http://127.0.0.1:2222" );
+            // Environment.SetEnvironmentVariable( "https_proxy", "http://127.0.0.1:2222" );
+            // Environment.SetEnvironmentVariable( "GRPC_TRACE", "all" );
+            // Environment.SetEnvironmentVariable( "GRPC_VERBOSITY", "DEBUG" );
+
             var clientPort = 5555;
             var serverPort = 8890;
             if( args.Length > 0 )
@@ -37,7 +42,8 @@ namespace DotNetGrpc
             server.Start();
             Console.WriteLine( $"Listening on port {serverPort}" );
 
-            Channel channel = new Channel( $"127.0.0.1:{clientPort}", ChannelCredentials.Insecure );
+            Channel channel = new Channel( $"localhost:{clientPort}", ChannelCredentials.Insecure );
+            // Channel channel = new Channel( $"127.0.0.1:{clientPort}", new SslCredentials() );
             var client = new HelloWorld.HelloWorldClient( channel );
             DoCalls( client ).Wait();
 
@@ -48,7 +54,6 @@ namespace DotNetGrpc
         public static async Task DoCalls(HelloWorld.HelloWorldClient client)
         {
             var response = await client.SayHelloAsync( new HelloRequest {Name = $"World"} );
-            Console.ReadKey();
 
             var complexStream = client.ComplexTypesStream();
             var stream = complexStream.RequestStream;
@@ -63,11 +68,8 @@ namespace DotNetGrpc
                     SingleString = "Foo"
                 }
             });
-            Console.ReadKey();
             await stream.WriteAsync( new ComplexTypeStream { GetValue = true });
-            Console.ReadKey();
             await stream.WriteAsync( new ComplexTypeStream { GetValue = true });
-            Console.ReadKey();
             await stream.WriteAsync( new ComplexTypeStream
             {
                 SetValue = new ComplexType
@@ -88,9 +90,7 @@ namespace DotNetGrpc
                     },
                 }
             } );
-            Console.ReadKey();
             await stream.WriteAsync( new ComplexTypeStream { GetValue = true });
-            Console.ReadKey();
             await stream.WriteAsync( new ComplexTypeStream { Close = true });
         }
 
