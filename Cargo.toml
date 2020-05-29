@@ -1,6 +1,6 @@
 [package]
 name = "proxide"
-version = "0.1.1" # Keep the version near the top for CI purposes (release.yml)
+version = "0.1.2" # Keep the version near the top for CI purposes (release.yml)
 authors = ["Mikko Rantanen <jubjub@jubjubnest.net>"]
 edition = "2018"
 license = "MIT OR Apache-2.0"
