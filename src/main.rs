@@ -17,7 +17,7 @@ mod search;
 mod session;
 mod ui;
 
-use connection::ProxyConnection;
+use connection::connect;
 use session::Session;
 
 #[derive(Debug, Snafu)]
@@ -262,8 +262,7 @@ async fn handle_socket(
     let server_stream = TcpStream::connect(target_server).await?;
 
     let tx_clone = tx.clone();
-    let mut connection =
-        ProxyConnection::new(client_stream, server_stream, src_addr, tx_clone).await?;
+    let mut connection = connect(client_stream, server_stream, src_addr, tx_clone).await?;
     connection.run(tx).await?;
 
     Ok(())
