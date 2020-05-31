@@ -1,10 +1,9 @@
 use std::io::Result;
-use std::pin::Pin;
-use std::task::Context;
-use std::task::Poll;
-use tokio::io::{split, AsyncRead, AsyncReadExt, AsyncWrite, ReadHalf, WriteHalf};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
 
-#[derive(Debug)]
+use super::stream::PrefixedStream;
+
+#[derive(Debug, PartialEq)]
 pub enum Protocol
 {
     Http2,
@@ -18,7 +17,6 @@ pub async fn recognize(
 {
     let mut buffer = [0_u8; 10];
     stream.read_exact(&mut buffer).await?;
-    println!("{:?}", String::from_utf8_lossy(&buffer));
 
     let protocol = match &buffer {
         // Content type: Handshake (22)
@@ -33,74 +31,5 @@ pub async fn recognize(
         _ => return Err(std::io::ErrorKind::InvalidData.into()),
     };
 
-    let (read_half, write_half) = split(stream);
-
-    Ok((
-        protocol,
-        DemultiplexingStream {
-            prelude: Some(buffer.into()),
-            read: read_half,
-            write: write_half,
-        },
-    ))
-}
-
-/// A stream that supports HTTP, HTTP2 or TLS connections.
-#[allow(dead_code)]
-struct DemultiplexingStream<S>
-{
-    prelude: Option<Vec<u8>>,
-    read: ReadHalf<S>,
-    write: WriteHalf<S>,
-}
-
-impl<S: AsyncWrite + AsyncRead + Unpin> DemultiplexingStream<S> {}
-
-impl<S: AsyncRead> AsyncRead for DemultiplexingStream<S>
-{
-    fn poll_read(mut self: Pin<&mut Self>, cx: &mut Context, buf: &mut [u8])
-        -> Poll<Result<usize>>
-    {
-        if let Some(p) = &mut self.prelude {
-            if p.len() <= buf.len() {
-                buf[..p.len()].copy_from_slice(&p);
-                let copied = p.len();
-                self.prelude = None;
-                return Poll::Ready(Ok(copied));
-            } else {
-                let mut taken = p.split_off(buf.len());
-                std::mem::swap(&mut taken, p);
-                buf.copy_from_slice(&taken);
-                return Poll::Ready(Ok(buf.len()));
-            }
-        }
-
-        // `self` is pinned, which results in `s.stream` being pinned.
-        // This makes the `map_unchecked_mut` safe here.
-        let inner_pin = unsafe { self.map_unchecked_mut(|s| &mut s.read) };
-        inner_pin.poll_read(cx, buf)
-    }
-}
-
-impl<S: AsyncWrite> AsyncWrite for DemultiplexingStream<S>
-{
-    fn poll_write(self: Pin<&mut Self>, cx: &mut Context, buf: &[u8]) -> Poll<Result<usize>>
-    {
-        // `self` is pinned, which results in `s.stream` being pinned.
-        // This makes the `map_unchecked_mut` safe here.
-        let inner_pin = unsafe { self.map_unchecked_mut(|s| &mut s.write) };
-        inner_pin.poll_write(cx, buf)
-    }
-
-    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<()>>
-    {
-        let inner_pin = unsafe { self.map_unchecked_mut(|s| &mut s.write) };
-        inner_pin.poll_flush(cx)
-    }
-
-    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<()>>
-    {
-        let inner_pin = unsafe { self.map_unchecked_mut(|s| &mut s.write) };
-        inner_pin.poll_shutdown(cx)
-    }
+    Ok((protocol, PrefixedStream::new(buffer.into(), stream)))
 }

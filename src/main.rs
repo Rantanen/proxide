@@ -1,12 +1,15 @@
 #![allow(clippy::match_bool)]
 
-use clap::{App, AppSettings, Arg, SubCommand};
+use clap::{App, AppSettings, Arg, ArgMatches, SubCommand};
 use crossterm::{cursor::MoveToPreviousLine, ExecutableCommand};
 use log::error;
 use snafu::{ResultExt, Snafu};
+use std::fs::File;
 use std::io::stdout;
+use std::io::Read;
 use std::net::SocketAddr;
 use std::sync::mpsc::Sender;
+use std::sync::Arc;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::oneshot;
 
@@ -17,7 +20,7 @@ mod search;
 mod session;
 mod ui;
 
-use connection::connect;
+use connection::{run, CADetails, ConnectionOptions};
 use session::Session;
 
 #[derive(Debug, Snafu)]
@@ -40,6 +43,12 @@ pub enum Error
     {
         source: session::serialization::SerializationError,
     },
+
+    #[snafu(display("Invalid configuration: {}", reason))]
+    ConfigurationError
+    {
+        reason: &'static str
+    },
 }
 
 fn main() -> Result<(), Error>
@@ -60,24 +69,9 @@ fn main() -> Result<(), Error>
     //
     // Both of these commands should support the decoder options so we'll want to further process
     // them before constructing the clap App.
-    let monitor_cmd = SubCommand::with_name("monitor")
-        .about("Monitor network traffic using the Proxide UI")
-        .arg(
-            Arg::with_name("listen")
-                .short("l")
-                .value_name("port")
-                .required(true)
-                .help("Specify listening port")
-                .takes_value(true),
-        )
-        .arg(
-            Arg::with_name("target")
-                .short("t")
-                .value_name("host:port")
-                .required(true)
-                .help("Specify target host and port")
-                .takes_value(true),
-        );
+    let monitor_cmd =
+        SubCommand::with_name("monitor").about("Monitor network traffic using the Proxide UI");
+    let monitor_cmd = add_connection_options(monitor_cmd);
 
     let view_cmd = SubCommand::with_name("view")
         .about("View traffic from a session or capture file")
@@ -89,38 +83,23 @@ fn main() -> Result<(), Error>
                 .help("Specify the file to load"),
         );
 
+    let capture_cmd = SubCommand::with_name("capture")
+        .about("Capture network traffic into a file for later analysis")
+        .arg(
+            Arg::with_name("file")
+                .short("o")
+                .value_name("file")
+                .required(true)
+                .index(1)
+                .help("Specify the output file"),
+        );
+    let capture_cmd = add_connection_options(capture_cmd);
+
     let mut app = App::new("Proxide - HTTP2 debugging proxy")
         .version(env!("CARGO_PKG_VERSION"))
         .author("Mikko Rantanen <rantanen@jubjubnest.net>")
         .setting(AppSettings::SubcommandRequiredElseHelp)
-        .subcommand(
-            SubCommand::with_name("capture")
-                .about("Capture network traffic into a file for later analysis")
-                .arg(
-                    Arg::with_name("file")
-                        .short("o")
-                        .value_name("file")
-                        .required(true)
-                        .index(1)
-                        .help("Specify the output file"),
-                )
-                .arg(
-                    Arg::with_name("listen")
-                        .short("l")
-                        .value_name("port")
-                        .required(true)
-                        .help("Specify listening port")
-                        .takes_value(true),
-                )
-                .arg(
-                    Arg::with_name("target")
-                        .short("t")
-                        .value_name("host:port")
-                        .required(true)
-                        .help("Specify target host and port")
-                        .takes_value(true),
-                ),
-        );
+        .subcommand(capture_cmd);
 
     // Add the decoder args to the subcommands before adding the subcommands to the app.
     for cmd in vec![monitor_cmd, view_cmd]
@@ -147,10 +126,9 @@ fn main() -> Result<(), Error>
     let (session, matches) = match matches.subcommand() {
         ("monitor", Some(sub_m)) => {
             // Monitor sets up the network tack.
-            let listen_port = sub_m.value_of("listen").unwrap().to_string();
-            let target_server = sub_m.value_of("target").unwrap().to_string();
+            let options = ConnectionOptions::resolve(&sub_m)?;
             network_thread = Some(std::thread::spawn(move || {
-                tokio_main(&listen_port, &target_server, abort_rx, ui_tx)
+                tokio_main(options, abort_rx, ui_tx)
             }));
             (Session::default(), sub_m)
         }
@@ -158,13 +136,8 @@ fn main() -> Result<(), Error>
             let filename = sub_m.value_of("file").unwrap();
 
             // Monitor sets up the network tack.
-            let listen_port = sub_m.value_of("listen").unwrap().to_string();
-            let target_server = sub_m.value_of("target").unwrap().to_string();
-            println!(
-                "Capturing traffic to '{}'. Press Ctrl-C to stop capture.",
-                target_server
-            );
-            std::thread::spawn(move || tokio_main(&listen_port, &target_server, abort_rx, ui_tx));
+            let options = ConnectionOptions::resolve(&sub_m)?;
+            std::thread::spawn(move || tokio_main(options, abort_rx, ui_tx));
             println!("... Waiting for connections.");
             return session::serialization::capture_to_file(ui_rx, abort_tx, &filename, |status| {
                 let _ = stdout().execute(MoveToPreviousLine(1));
@@ -203,10 +176,89 @@ fn main() -> Result<(), Error>
     Ok(())
 }
 
+fn add_connection_options<'a, 'b>(cmd: App<'a, 'b>) -> App<'a, 'b>
+{
+    cmd.arg(
+        Arg::with_name("listen")
+            .short("l")
+            .value_name("port")
+            .required(true)
+            .help("Specify listening port")
+            .takes_value(true),
+    )
+    .arg(
+        Arg::with_name("target")
+            .short("t")
+            .value_name("host:port")
+            .required(true)
+            .help("Specify target host and port")
+            .takes_value(true),
+    )
+    .arg(
+        Arg::with_name("ca-certificate")
+            .long("ca-certificate")
+            .value_name("path")
+            .required(false)
+            .help("Specify the CA certificate used to sign the generated TLS certificates")
+            .takes_value(true),
+    )
+    .arg(
+        Arg::with_name("ca-key")
+            .long("ca-key")
+            .value_name("path")
+            .required(false)
+            .help("Specify the CA private key used to sign the generated TLS certificates")
+            .takes_value(true),
+    )
+}
+
+impl ConnectionOptions
+{
+    fn resolve(args: &ArgMatches) -> Result<Arc<Self>, Error>
+    {
+        let cert_details = match (args.value_of("ca-certificate"), args.value_of("ca-key")) {
+            (None, None) => None,
+            (Some(cert), Some(key)) => Some((cert, key)),
+            _ => {
+                return Err(Error::ConfigurationError {
+                    reason: "ca-certificate and ca-key options must be used together",
+                })
+            }
+        };
+
+        let ca_details = match cert_details {
+            None => None,
+            Some((cert, key)) => {
+                let mut cert_data = String::new();
+                let mut key_data = String::new();
+                File::open(&cert)
+                    .and_then(|mut file| file.read_to_string(&mut cert_data))
+                    .map_err(|_| Error::ConfigurationError {
+                        reason: "Could not read CA certificate",
+                    })?;
+                File::open(&key)
+                    .and_then(|mut file| file.read_to_string(&mut key_data))
+                    .map_err(|_| Error::ConfigurationError {
+                        reason: "Could not read CA key",
+                    })?;
+                Some(CADetails {
+                    certificate: cert_data,
+                    key: key_data,
+                })
+            }
+        };
+
+        Ok(Arc::new(Self {
+            listen_port: args.value_of("listen").unwrap().to_string(),
+            target_server: args.value_of("target").unwrap().to_string(),
+            ca: ca_details,
+        }))
+    }
+}
+
 #[tokio::main]
 async fn tokio_main(
-    listen_port: &str,
-    target_server: &str,
+    options: Arc<ConnectionOptions>,
     mut abort_rx: oneshot::Receiver<()>,
     ui_tx: Sender<session::events::SessionEvent>,
 ) -> Result<(), Error>
@@ -214,10 +266,10 @@ async fn tokio_main(
     // We'll want to liten for both IPv4 and IPv6. These days 'localhost' will first resolve to the
     // IPv6 address if that is available. If we did not bind to it, all the connections would first
     // need to timeout there before the Ipv4 would be attempted as a fallback.
-    let mut listener_ipv4 = TcpListener::bind(format!("0.0.0.0:{}", listen_port))
+    let mut listener_ipv4 = TcpListener::bind(format!("0.0.0.0:{}", &options.listen_port))
         .await
         .unwrap();
-    let mut listener_ipv6 = TcpListener::bind(format!("[::1]:{}", listen_port))
+    let mut listener_ipv6 = TcpListener::bind(format!("[::1]:{}", &options.listen_port))
         .await
         .unwrap();
 
@@ -225,10 +277,11 @@ async fn tokio_main(
     loop {
         tokio::select! {
             _ = &mut abort_rx => {
+                log::info!("tokio_main done");
                 break Ok(());
             },
-            result = listener_ipv4.accept() => new_connection(ui_tx.clone(), result, &target_server),
-            result = listener_ipv6.accept() => new_connection(ui_tx.clone(), result, &target_server),
+            result = listener_ipv4.accept() => new_connection(ui_tx.clone(), result, options.clone()),
+            result = listener_ipv6.accept() => new_connection(ui_tx.clone(), result, options.clone()),
         }
     }
 }
@@ -236,34 +289,18 @@ async fn tokio_main(
 fn new_connection(
     tx: Sender<session::events::SessionEvent>,
     result: Result<(TcpStream, SocketAddr), std::io::Error>,
-    target_server: &str,
+    options: Arc<ConnectionOptions>,
 )
 {
     // Process the new connection by spawning a new tokio task. This allows the original task to
     // process more connections.
-    let target_server = target_server.to_string();
     if let Ok((socket, src_addr)) = result {
+        let options = options.clone();
         tokio::spawn(async move {
-            match handle_socket(tx, socket, src_addr, &target_server).await {
+            match run(socket, src_addr, options, tx).await {
                 Ok(..) => {}
                 Err(e) => error!("Connection error\n{}", e),
             }
         });
     }
-}
-
-async fn handle_socket(
-    tx: Sender<session::events::SessionEvent>,
-    client_stream: TcpStream,
-    src_addr: SocketAddr,
-    target_server: &str,
-) -> Result<(), Box<dyn std::error::Error>>
-{
-    let server_stream = TcpStream::connect(target_server).await?;
-
-    let tx_clone = tx.clone();
-    let mut connection = connect(client_stream, server_stream, src_addr, tx_clone).await?;
-    connection.run(tx).await?;
-
-    Ok(())
 }

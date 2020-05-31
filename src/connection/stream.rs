@@ -1,0 +1,79 @@
+use std::io::Result;
+use std::pin::Pin;
+use std::task::Context;
+use std::task::Poll;
+use tokio::io::{split, AsyncRead, AsyncWrite, ReadHalf, WriteHalf};
+
+/// A stream that supports HTTP, HTTP2 or TLS connections.
+pub struct PrefixedStream<S>
+{
+    prefix: Option<Vec<u8>>,
+    read: ReadHalf<S>,
+    write: WriteHalf<S>,
+}
+
+impl<S> PrefixedStream<S>
+where
+    S: AsyncWrite + AsyncRead,
+{
+    pub fn new(prefix: Vec<u8>, stream: S) -> Self
+    {
+        let (read, write) = split(stream);
+        Self {
+            prefix: Some(prefix),
+            read,
+            write,
+        }
+    }
+}
+
+impl<S: AsyncWrite + AsyncRead + Unpin> PrefixedStream<S> {}
+
+impl<S: AsyncRead> AsyncRead for PrefixedStream<S>
+{
+    fn poll_read(mut self: Pin<&mut Self>, cx: &mut Context, buf: &mut [u8])
+        -> Poll<Result<usize>>
+    {
+        if let Some(p) = &mut self.prefix {
+            if p.len() <= buf.len() {
+                buf[..p.len()].copy_from_slice(&p);
+                let copied = p.len();
+                self.prefix = None;
+                return Poll::Ready(Ok(copied));
+            } else {
+                let mut taken = p.split_off(buf.len());
+                std::mem::swap(&mut taken, p);
+                buf.copy_from_slice(&taken);
+                return Poll::Ready(Ok(buf.len()));
+            }
+        }
+
+        // `self` is pinned, which results in `s.stream` being pinned.
+        // This makes the `map_unchecked_mut` safe here.
+        let inner_pin = unsafe { self.map_unchecked_mut(|s| &mut s.read) };
+        inner_pin.poll_read(cx, buf)
+    }
+}
+
+impl<S: AsyncWrite> AsyncWrite for PrefixedStream<S>
+{
+    fn poll_write(self: Pin<&mut Self>, cx: &mut Context, buf: &[u8]) -> Poll<Result<usize>>
+    {
+        // `self` is pinned, which results in `s.stream` being pinned.
+        // This makes the `map_unchecked_mut` safe here.
+        let inner_pin = unsafe { self.map_unchecked_mut(|s| &mut s.write) };
+        inner_pin.poll_write(cx, buf)
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<()>>
+    {
+        let inner_pin = unsafe { self.map_unchecked_mut(|s| &mut s.write) };
+        inner_pin.poll_flush(cx)
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<()>>
+    {
+        let inner_pin = unsafe { self.map_unchecked_mut(|s| &mut s.write) };
+        inner_pin.poll_shutdown(cx)
+    }
+}

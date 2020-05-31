@@ -1,62 +1,132 @@
-use bytes::Bytes;
-use chrono::prelude::*;
-use h2::{
-    client::{self, ResponseFuture},
-    server::{self, SendResponse},
-    Reason, RecvStream, SendStream,
-};
-use http::{HeaderMap, Request, Response};
-use log::error;
 use snafu::{ResultExt, Snafu};
 use std::net::SocketAddr;
 use std::sync::mpsc::Sender;
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
+use std::sync::Arc;
 use tokio::net::TcpStream;
-use uuid::Uuid;
 
 use crate::session::events::*;
 use crate::session::*;
 
 mod demux;
 mod http2;
+mod stream;
+mod tls;
+
+#[derive(Debug, Snafu)]
+#[snafu(visibility(pub(crate)))]
+pub enum ConfigurationErrorKind
+{
+    DNSError
+    {
+        source: webpki::InvalidDNSNameError,
+    },
+    NoSource {},
+}
+
+#[derive(Debug, Snafu)]
+#[snafu(visibility(pub(crate)))]
+pub enum EndpointError
+{
+    IoError
+    {
+        source: std::io::Error
+    },
+    H2Error
+    {
+        source: h2::Error
+    },
+    TLSError
+    {
+        source: rustls::TLSError
+    },
+
+    #[snafu(display("{}", reason))]
+    ProxideError
+    {
+        reason: &'static str
+    },
+}
 
 #[derive(Debug, Snafu)]
 #[snafu(visibility(pub(crate)))]
 pub enum Error
 {
-    #[snafu(display("HTTP error occurred with the server in {}: {}", scenario, source))]
+    #[snafu(display("Configuration error: {}", reason))]
+    ConfigurationError
+    {
+        reason: &'static str,
+        source: ConfigurationErrorKind,
+    },
+
+    #[snafu(display("Error occurred with the server in {}: {}", scenario, source))]
     ServerError
     {
         scenario: &'static str,
-        source: h2::Error,
+        source: EndpointError,
     },
 
-    #[snafu(display("HTTP error occurred with the client in {}: {}", scenario, source))]
+    #[snafu(display("Error occurred with the client in {}: {}", scenario, source))]
     ClientError
     {
         scenario: &'static str,
-        source: h2::Error,
-    },
-
-    #[snafu(display("HTTP error occurred with the client in {}: {}", scenario, source))]
-    ClientIoError
-    {
-        scenario: &'static str,
-        source: std::io::Error,
+        source: EndpointError,
     },
 }
 
 pub type Result<S, E = Error> = std::result::Result<S, E>;
 
-pub async fn connect(
-    client: TcpStream,
-    server: TcpStream,
-    src_addr: SocketAddr,
-    ui: Sender<SessionEvent>,
-) -> Result<http2::Http2Connection<impl AsyncWrite + AsyncRead + Unpin + 'static, TcpStream>>
+pub struct ConnectionOptions
 {
-    let (protocol, client) = demux::recognize(client).await.context(ClientIoError {
-        scenario: "demuxing stream",
-    })?;
-    http2::Http2Connection::new(src_addr, client, server, ui).await
+    pub listen_port: String,
+    pub target_server: String,
+    pub ca: Option<CADetails>,
+}
+
+pub struct CADetails
+{
+    pub certificate: String,
+    pub key: String,
+}
+
+pub async fn run(
+    client: TcpStream,
+    src_addr: SocketAddr,
+    options: Arc<ConnectionOptions>,
+    ui: Sender<SessionEvent>,
+) -> Result<()>
+//) -> Result<http2::Http2Connection<impl AsyncWrite + AsyncRead + Unpin + 'static, TcpStream>>
+{
+    let (protocol, client) =
+        demux::recognize(client)
+            .await
+            .context(IoError {})
+            .context(ClientError {
+                scenario: "demuxing stream",
+            })?;
+
+    let ui_clone = ui.clone();
+    if protocol == demux::Protocol::TLS {
+        log::info!("New TLS connection from {}", src_addr);
+
+        let streams = tls::TlsProxy::new(client, options.clone()).await?;
+        let mut conn = http2::Http2Connection::new(
+            src_addr,
+            streams.client_stream,
+            streams.server_stream,
+            ui_clone,
+        )
+        .await?;
+        conn.run(ui).await?;
+    } else {
+        let server = TcpStream::connect(&options.target_server)
+            .await
+            .context(IoError {})
+            .context(ServerError {
+                scenario: "connecting",
+            })?;
+        let mut conn = http2::Http2Connection::new(src_addr, client, server, ui_clone).await?;
+        conn.run(ui).await?;
+    }
+
+    Ok(())
 }

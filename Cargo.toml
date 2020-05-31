@@ -31,3 +31,7 @@ http-serde = "1"
 rmp-serde = "0.14"
 lazy_static = "1"
 ctrlc = "3"
+rustls = { version = "0.17", features = [ "dangerous_configuration" ] }
+webpki = "0.21"
+tokio-rustls = "0.13"
+rcgen = { version = "0.8", features = [ "pem", "x509-parser" ] }

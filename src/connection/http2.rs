@@ -8,16 +8,13 @@ use h2::{
 };
 use http::{HeaderMap, Request, Response};
 use log::error;
-use snafu::{ResultExt, Snafu};
+use snafu::ResultExt;
 use std::net::SocketAddr;
 use std::sync::mpsc::Sender;
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
-use tokio::net::TcpStream;
+use tokio::io::{AsyncRead, AsyncWrite};
 use uuid::Uuid;
 
 use super::*;
-use crate::session::events::*;
-use crate::session::*;
 
 pub struct Http2Connection<TClient, TServer>
 {
@@ -45,11 +42,14 @@ where
             .initial_window_size(1_000_000)
             .handshake(client)
             .await
+            .context(H2Error {})
             .context(ClientError {
                 scenario: "client handshake",
             })?;
-        let (server_stream, server_connection) =
-            client::handshake(server).await.context(ServerError {
+        let (server_stream, server_connection) = client::handshake(server)
+            .await
+            .context(H2Error {})
+            .context(ServerError {
                 scenario: "server handshake",
             })?;
 
@@ -66,9 +66,14 @@ where
             }
         });
 
-        let server_stream = server_stream.ready().await.context(ServerError {
-            scenario: "starting stream",
-        })?;
+        let server_stream =
+            server_stream
+                .ready()
+                .await
+                .context(H2Error {})
+                .context(ServerError {
+                    scenario: "starting stream",
+                })?;
 
         let conn = Self {
             uuid,
@@ -100,9 +105,10 @@ where
                 // These requests will be handled in parallel by spawning them into their own
                 // tasks.
                 while let Some(request) = client_connection.accept().await {
-                    let (client_request, client_response) = request.context(ClientError {
-                        scenario: "processing request",
-                    })?;
+                    let (client_request, client_response) =
+                        request.context(H2Error {}).context(ClientError {
+                            scenario: "processing request",
+                        })?;
 
                     let request = ProxyRequest::new(
                         uuid,
@@ -180,6 +186,7 @@ impl ProxyRequest
         // Set up a server request.
         let (server_response, server_request) = server_stream
             .send_request(server_request, client_request.is_end_stream())
+            .context(H2Error {})
             .context(ServerError {
                 scenario: "sending request",
             })?;
@@ -225,6 +232,7 @@ impl ProxyRequest
                 if let Some(trailers) = trailers.clone() {
                     server_request
                         .send_trailers(trailers)
+                        .context(H2Error {})
                         .context(ServerError {
                             scenario: "sending trailers",
                         })?;
@@ -250,9 +258,12 @@ impl ProxyRequest
         let ui_temp = ui.clone();
         let response_future = async move {
             let ui = ui_temp;
-            let response = server_response.await.context(ServerError {
-                scenario: "waiting for response",
-            })?;
+            let response = server_response
+                .await
+                .context(H2Error {})
+                .context(ServerError {
+                    scenario: "waiting for response",
+                })?;
 
             let (response_head, response_body) = response.into_parts();
             ui.send(SessionEvent::NewResponse(NewResponseEvent {
@@ -267,6 +278,7 @@ impl ProxyRequest
 
             let mut client_stream = client_response
                 .send_response(response, response_body.is_end_stream())
+                .context(H2Error {})
                 .context(ClientError {
                     scenario: "sending response",
                 })?;
@@ -288,9 +300,12 @@ impl ProxyRequest
                 log::info!("{}: Server stream ended", uuid);
 
                 if let Some(trailers) = trailers.clone() {
-                    client_stream.send_trailers(trailers).context(ServerError {
-                        scenario: "sending trailers",
-                    })?;
+                    client_stream
+                        .send_trailers(trailers)
+                        .context(H2Error {})
+                        .context(ServerError {
+                            scenario: "sending trailers",
+                        })?;
                 }
 
                 Ok(trailers)
@@ -326,7 +341,7 @@ async fn pipe_stream(
 ) -> Result<Option<HeaderMap>>
 {
     while let Some(data) = source.data().await {
-        let b = data.context(ClientError {
+        let b = data.context(H2Error {}).context(ClientError {
             scenario: "reading content",
         })?;
 
@@ -341,15 +356,20 @@ async fn pipe_stream(
         let size = b.len();
         target
             .send_data(b, source.is_end_stream())
+            .context(H2Error {})
             .context(ServerError {
                 scenario: "writing content",
             })?;
         source.flow_control().release_capacity(size).unwrap();
     }
 
-    let t = source.trailers().await.context(ClientError {
-        scenario: "receiving trailers",
-    })?;
+    let t = source
+        .trailers()
+        .await
+        .context(H2Error {})
+        .context(ClientError {
+            scenario: "receiving trailers",
+        })?;
     Ok(t)
 }
 
@@ -390,12 +410,13 @@ fn is_fatal_error<S>(r: &Result<S, Error>) -> bool
     match r {
         Ok(_) => false,
         Err(e) => match e {
-            Error::ServerError { source, .. } | Error::ClientError { source, .. } => {
-                match source.reason() {
+            Error::ServerError { source, .. } | Error::ClientError { source, .. } => match source {
+                EndpointError::H2Error { source } => match source.reason() {
                     Some(Reason::NO_ERROR) => false,
                     _ => true,
-                }
-            }
+                },
+                _ => true,
+            },
             _ => true,
         },
     }
