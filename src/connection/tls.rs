@@ -13,106 +13,103 @@ use webpki::{DNSName, DNSNameRef};
 use super::stream::PrefixedStream;
 use super::*;
 
-pub struct TlsProxy<TClient, TServer>
-{
-    pub client_stream: tokio_rustls::server::TlsStream<PrefixedStream<TClient>>,
-    pub server_stream: tokio_rustls::client::TlsStream<TServer>,
-}
-
-impl<TClient, TServer> TlsProxy<TClient, TServer>
+pub async fn handle<TClient, TServer>(
+    uuid: Uuid,
+    streams: Streams<TClient, TServer>,
+    options: Arc<ConnectionOptions>,
+) -> Result<
+    Streams<
+        tokio_rustls::server::TlsStream<PrefixedStream<TClient>>,
+        tokio_rustls::client::TlsStream<TServer>,
+    >,
+>
 where
     TClient: AsyncRead + AsyncWrite + Unpin,
     TServer: AsyncRead + AsyncWrite + Unpin,
 {
-    pub async fn new(
-        uuid: Uuid,
-        mut client: TClient,
-        server: TServer,
-        options: Arc<ConnectionOptions>,
-    ) -> Result<Self>
-    {
-        let ca = match &options.ca {
-            None => {
-                return Err(Error::ConfigurationError {
-                    source: ConfigurationErrorKind::NoSource {},
-                    reason: "TLS connections require CA certificate",
-                })
-            }
-            Some(ca) => ca,
-        };
+    let Streams { mut client, server } = streams;
 
-        // Peek at the client request to figure out the server/alpn the client sent.
-        let HelloResult {
-            data: client_data,
-            sni,
-            alpn,
-        } = resolve_client_hello(&mut client).await?;
-        log::debug!("{} - Client SNI='{:?}', ALPN='{:?}'", uuid, sni, alpn);
-
-        // Connect to the server.
-
-        // Resolve the server hostname from the SNI.
-        log::debug!("{} - Final target server='{}", uuid, options.target_server);
-
-        let mut server_stream_config = ClientConfig::new();
-        server_stream_config.set_protocols(&alpn);
-        DangerousClientConfig {
-            cfg: &mut server_stream_config,
+    let ca = match &options.ca {
+        None => {
+            return Err(Error::ConfigurationError {
+                source: ConfigurationErrorKind::NoSource {},
+                reason: "TLS connections require CA certificate",
+            })
         }
-        .set_certificate_verifier(Arc::new(NoVerify));
-        let server_stream_config = TlsConnector::from(Arc::new(server_stream_config));
+        Some(ca) => ca,
+    };
 
-        log::debug!(
-            "{} - Establishing connection to {}",
-            uuid,
-            options.target_server
-        );
-        let server_stream = server_stream_config
-            .connect(sni.as_ref(), server)
-            .await
-            .context(IoError {})
-            .context(ServerError {
-                scenario: "connecting TLS",
-            })?;
+    // Peek at the client request to figure out the server/alpn the client sent.
+    let HelloResult {
+        data: client_data,
+        sni,
+        alpn,
+    } = resolve_client_hello(&mut client).await?;
+    log::debug!("{} - Client SNI='{:?}', ALPN='{:?}'", uuid, sni, alpn);
 
-        let alpn = server_stream.get_ref().1.get_alpn_protocol();
-        log::debug!(
-            "{} - Server connection done; ALPN='{:?}'",
-            uuid,
-            alpn.map(|o| String::from_utf8_lossy(o))
-        );
+    // Connect to the server.
 
-        let mut client_stream_config = ServerConfig::new(NoClientAuth::new());
-        let (cert_chain, private_key) =
-            get_certificate(AsRef::<str>::as_ref(&options.target_server), ca);
-        log::trace!(
-            "{} - Certificate: {}",
-            uuid,
-            cert_chain[0]
-                .0
-                .iter()
-                .map(|u| format!("{:02x} ", u))
-                .collect::<String>()
-        );
-        client_stream_config
-            .set_single_cert(cert_chain, private_key)
-            .unwrap();
-        alpn.map(|alpn| client_stream_config.set_protocols(&[alpn.to_vec()]));
-        let client_stream_acceptor = TlsAcceptor::from(Arc::new(client_stream_config));
-        let client_stream = client_stream_acceptor
-            .accept(PrefixedStream::new(client_data, client))
-            .await
-            .context(IoError {})
-            .context(ClientError {
-                scenario: "connecting TLS",
-            })?;
+    // Resolve the server hostname from the SNI.
+    log::debug!("{} - Final target server='{}", uuid, options.target_server);
 
-        log::debug!("{} - TLS stream established", uuid);
-        Ok(Self {
-            client_stream,
-            server_stream,
-        })
+    let mut server_stream_config = ClientConfig::new();
+    server_stream_config.set_protocols(&alpn);
+    DangerousClientConfig {
+        cfg: &mut server_stream_config,
     }
+    .set_certificate_verifier(Arc::new(NoVerify));
+    let server_stream_config = TlsConnector::from(Arc::new(server_stream_config));
+
+    log::debug!(
+        "{} - Establishing connection to {}",
+        uuid,
+        options.target_server
+    );
+    let server_stream = server_stream_config
+        .connect(sni.as_ref(), server)
+        .await
+        .context(IoError {})
+        .context(ServerError {
+            scenario: "connecting TLS",
+        })?;
+
+    let alpn = server_stream.get_ref().1.get_alpn_protocol();
+    log::debug!(
+        "{} - Server connection done; ALPN='{:?}'",
+        uuid,
+        alpn.map(|o| String::from_utf8_lossy(o))
+    );
+
+    let mut client_stream_config = ServerConfig::new(NoClientAuth::new());
+    let (cert_chain, private_key) =
+        get_certificate(AsRef::<str>::as_ref(&options.target_server), ca);
+    log::trace!(
+        "{} - Certificate: {}",
+        uuid,
+        cert_chain[0]
+            .0
+            .iter()
+            .map(|u| format!("{:02x} ", u))
+            .collect::<String>()
+    );
+    client_stream_config
+        .set_single_cert(cert_chain, private_key)
+        .unwrap();
+    alpn.map(|alpn| client_stream_config.set_protocols(&[alpn.to_vec()]));
+    let client_stream_acceptor = TlsAcceptor::from(Arc::new(client_stream_config));
+    let client_stream = client_stream_acceptor
+        .accept(PrefixedStream::new(client_data, client))
+        .await
+        .context(IoError {})
+        .context(ClientError {
+            scenario: "connecting TLS",
+        })?;
+
+    log::debug!("{} - TLS stream established", uuid);
+    Ok(Streams {
+        client: client_stream,
+        server: server_stream,
+    })
 }
 
 struct ClientHelloCapture

@@ -95,6 +95,20 @@ pub struct CADetails
     pub key: String,
 }
 
+pub struct Streams<TClient, TServer>
+{
+    pub client: TClient,
+    pub server: TServer,
+}
+
+impl<TClient, TServer> Streams<TClient, TServer>
+{
+    pub fn new(client: TClient, server: TServer) -> Self
+    {
+        Self { client, server }
+    }
+}
+
 pub async fn run(
     client: TcpStream,
     src_addr: SocketAddr,
@@ -143,8 +157,7 @@ pub async fn connect_phase(
         handle_protocol(
             uuid,
             protocol,
-            client_stream,
-            connect_data.server_stream,
+            Streams::new(client_stream, connect_data.server_stream),
             src_addr,
             protocol_stack,
             options,
@@ -161,8 +174,7 @@ pub async fn connect_phase(
         handle_protocol(
             uuid,
             protocol,
-            client,
-            server,
+            Streams::new(client, server),
             src_addr,
             protocol_stack,
             options,
@@ -175,8 +187,7 @@ pub async fn connect_phase(
 pub async fn handle_protocol<TClient, TServer>(
     uuid: Uuid,
     protocol: demux::Protocol,
-    client: TClient,
-    server: TServer,
+    streams: Streams<TClient, TServer>,
     src_addr: SocketAddr,
     mut protocol_stack: Vec<Protocol>,
     options: Arc<ConnectionOptions>,
@@ -189,22 +200,10 @@ where
     let ui_clone = ui.clone();
     if protocol == demux::Protocol::TLS {
         protocol_stack.push(Protocol::Tls);
-        let streams = tls::TlsProxy::new(uuid, client, server, options.clone()).await?;
-        let mut conn = http2::Http2Connection::new(
-            uuid,
-            src_addr,
-            streams.client_stream,
-            streams.server_stream,
-            protocol_stack,
-            ui_clone,
-        )
-        .await?;
-        conn.run(ui).await?;
+        let streams = tls::handle(uuid, streams, options.clone()).await?;
+        http2::handle(uuid, src_addr, streams, protocol_stack, ui_clone).await?;
     } else {
-        let mut conn =
-            http2::Http2Connection::new(uuid, src_addr, client, server, protocol_stack, ui_clone)
-                .await?;
-        conn.run(ui).await?;
+        http2::handle(uuid, src_addr, streams, protocol_stack, ui_clone).await?;
     }
 
     Ok(())

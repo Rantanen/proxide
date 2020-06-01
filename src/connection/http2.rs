@@ -16,140 +16,113 @@ use uuid::Uuid;
 
 use super::*;
 
-pub struct Http2Connection<TClient, TServer>
-{
+pub async fn handle<TClient, TServer>(
     uuid: Uuid,
-    client_connection: server::Connection<TClient, Bytes>,
-    server_stream: client::SendRequest<Bytes>,
-    server_connection: std::marker::PhantomData<TServer>,
-}
-
-impl<TClient, TServer> Http2Connection<TClient, TServer>
+    client_addr: SocketAddr,
+    streams: Streams<TClient, TServer>,
+    mut protocol_stack: Vec<Protocol>,
+    ui: Sender<SessionEvent>,
+) -> Result<()>
 where
-    TClient: AsyncRead + AsyncWrite + Unpin,
+    TClient: AsyncRead + AsyncWrite + Unpin + Send + 'static,
     TServer: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
-    pub async fn new(
-        uuid: Uuid,
-        client_addr: SocketAddr,
-        client: TClient,
-        server: TServer,
-        mut protocol_stack: Vec<Protocol>,
-        ui: Sender<SessionEvent>,
-    ) -> Result<Self>
-    {
-        protocol_stack.push(Protocol::Http2);
+    let Streams { client, server } = streams;
+    protocol_stack.push(Protocol::Http2);
 
-        // This is a debugging proxy so we don't need to be supporting hundreds of concurrent
-        // requests. We can opt for a bit larger window size to avoid slowing down the connection.
-        let client_connection = server::Builder::new()
-            .initial_window_size(1_000_000)
-            .handshake(client)
-            .await
-            .context(H2Error {})
-            .context(ClientError {
-                scenario: "client handshake",
-            })?;
-        let (server_stream, server_connection) = client::handshake(server)
+    // This is a debugging proxy so we don't need to be supporting hundreds of concurrent
+    // requests. We can opt for a bit larger window size to avoid slowing down the connection.
+    let mut client_connection = server::Builder::new()
+        .initial_window_size(1_000_000)
+        .handshake(client)
+        .await
+        .context(H2Error {})
+        .context(ClientError {
+            scenario: "client handshake",
+        })?;
+    let (server_stream, server_connection) = client::handshake(server)
+        .await
+        .context(H2Error {})
+        .context(ServerError {
+            scenario: "server handshake",
+        })?;
+
+    // The connection futures are responsible for driving the network communication.
+    // Spawn them into a new task to take care of that.
+    tokio::spawn({
+        let uuid = uuid;
+        async move {
+            match server_connection.await {
+                Ok(..) => {}
+                Err(e) => error!("Server connection failed for connection {}; {}", uuid, e),
+            }
+        }
+    });
+
+    let mut server_stream =
+        server_stream
+            .ready()
             .await
             .context(H2Error {})
             .context(ServerError {
-                scenario: "server handshake",
+                scenario: "starting stream",
             })?;
 
-        // The connection futures are responsible for driving the network communication.
-        // Spawn them into a new task to take care of that.
-        tokio::spawn({
-            let uuid = uuid;
-            async move {
-                match server_connection.await {
-                    Ok(..) => {}
-                    Err(e) => error!("Server connection failed for connection {}; {}", uuid, e),
-                }
+    ui.send(SessionEvent::NewConnection(NewConnectionEvent {
+        uuid,
+        protocol_stack,
+        client_addr,
+        timestamp: Local::now(),
+    }))
+    .unwrap();
+
+    // We'll wrap all of this into an `async` block to act as a try/catch for handling errors
+    // at the end of the function.
+    let r = {
+        let ui = ui.clone();
+        let client_connection = &mut client_connection;
+        let server_stream = &mut server_stream;
+        let uuid = uuid;
+        async move {
+            // The client_connection will produce individual HTTP request that we'll accept.
+            // These requests will be handled in parallel by spawning them into their own
+            // tasks.
+            while let Some(request) = client_connection.accept().await {
+                let (client_request, client_response) =
+                    request.context(H2Error {}).context(ClientError {
+                        scenario: "processing request",
+                    })?;
+
+                let request =
+                    ProxyRequest::new(uuid, client_request, client_response, server_stream, &ui)?;
+
+                let ui = ui.clone();
+                tokio::spawn(async move {
+                    let ui = ui;
+                    match request.execute(ui).await {
+                        Ok(_) => {}
+                        Err(e) => error!("Request error for request {}; {}", uuid, e),
+                    }
+                });
             }
-        });
 
-        let server_stream =
-            server_stream
-                .ready()
-                .await
-                .context(H2Error {})
-                .context(ServerError {
-                    scenario: "starting stream",
-                })?;
-
-        let conn = Self {
-            uuid,
-            client_connection,
-            server_stream,
-            server_connection: std::marker::PhantomData,
-        };
-
-        ui.send(SessionEvent::NewConnection(NewConnectionEvent {
-            uuid: conn.uuid,
-            protocol_stack,
-            client_addr,
-            timestamp: Local::now(),
-        }))
-        .unwrap();
-        Ok(conn)
-    }
-
-    pub async fn run(&mut self, ui: Sender<SessionEvent>) -> Result<()>
-    {
-        // We'll wrap all of this into an `async` block to act as a try/catch for handling errors
-        // at the end of the function.
-        let r = {
-            let ui = ui.clone();
-            let client_connection = &mut self.client_connection;
-            let server_stream = &mut self.server_stream;
-            let uuid = self.uuid;
-            async move {
-                // The client_connection will produce individual HTTP request that we'll accept.
-                // These requests will be handled in parallel by spawning them into their own
-                // tasks.
-                while let Some(request) = client_connection.accept().await {
-                    let (client_request, client_response) =
-                        request.context(H2Error {}).context(ClientError {
-                            scenario: "processing request",
-                        })?;
-
-                    let request = ProxyRequest::new(
-                        uuid,
-                        client_request,
-                        client_response,
-                        server_stream,
-                        &ui,
-                    )?;
-
-                    let ui = ui.clone();
-                    tokio::spawn(async move {
-                        let ui = ui;
-                        match request.execute(ui).await {
-                            Ok(_) => {}
-                            Err(e) => error!("Request error for request {}; {}", uuid, e),
-                        }
-                    });
-                }
-
-                Ok(())
-            }
+            Ok(())
         }
-        .await;
-
-        // Once the ´while client_connection.accept()` loop ends, the connection will close (or
-        // alternatively an error happened and we'll terminate it). The final status value depends
-        // on whether there was an error or not.
-        ui.send(SessionEvent::ConnectionClosed {
-            uuid: self.uuid,
-            status: match r {
-                Ok(_) => Status::Succeeded,
-                Err(_) => Status::Failed,
-            },
-        })
-        .unwrap();
-        r
     }
+    .await;
+
+    // Once the ´while client_connection.accept()` loop ends, the connection will close (or
+    // alternatively an error happened and we'll terminate it). The final status value depends
+    // on whether there was an error or not.
+    ui.send(SessionEvent::ConnectionClosed {
+        uuid,
+        status: match r {
+            Ok(_) => Status::Succeeded,
+            Err(_) => Status::Failed,
+        },
+    })
+    .unwrap();
+    r
 }
 
 pub struct ProxyRequest
