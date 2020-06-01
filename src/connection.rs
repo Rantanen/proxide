@@ -189,7 +189,7 @@ where
     let ui_clone = ui.clone();
     if protocol == demux::Protocol::TLS {
         protocol_stack.push(Protocol::Tls);
-        let streams = tls::TlsProxy::new(client, server, options.clone()).await?;
+        let streams = tls::TlsProxy::new(uuid, client, server, options.clone()).await?;
         let mut conn = http2::Http2Connection::new(
             uuid,
             src_addr,

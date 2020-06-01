@@ -7,6 +7,7 @@ use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
 use tokio_rustls::{TlsAcceptor, TlsConnector};
+use uuid::Uuid;
 use webpki::{DNSName, DNSNameRef};
 
 use super::stream::PrefixedStream;
@@ -24,6 +25,7 @@ where
     TServer: AsyncRead + AsyncWrite + Unpin,
 {
     pub async fn new(
+        uuid: Uuid,
         mut client: TClient,
         server: TServer,
         options: Arc<ConnectionOptions>,
@@ -45,12 +47,12 @@ where
             sni,
             alpn,
         } = resolve_client_hello(&mut client).await?;
-        log::debug!("Client SNI='{:?}', ALPN='{:?}'", sni, alpn);
+        log::debug!("{} - Client SNI='{:?}', ALPN='{:?}'", uuid, sni, alpn);
 
         // Connect to the server.
 
         // Resolve the server hostname from the SNI.
-        log::debug!("Final target server='{}", options.target_server);
+        log::debug!("{} - Final target server='{}", uuid, options.target_server);
 
         let mut server_stream_config = ClientConfig::new();
         server_stream_config.set_protocols(&alpn);
@@ -60,7 +62,11 @@ where
         .set_certificate_verifier(Arc::new(NoVerify));
         let server_stream_config = TlsConnector::from(Arc::new(server_stream_config));
 
-        log::debug!("Establishing connection to {}", options.target_server);
+        log::debug!(
+            "{} - Establishing connection to {}",
+            uuid,
+            options.target_server
+        );
         let server_stream = server_stream_config
             .connect(sni.as_ref(), server)
             .await
@@ -71,7 +77,8 @@ where
 
         let alpn = server_stream.get_ref().1.get_alpn_protocol();
         log::debug!(
-            "Server connection done; ALPN='{:?}'",
+            "{} - Server connection done; ALPN='{:?}'",
+            uuid,
             alpn.map(|o| String::from_utf8_lossy(o))
         );
 
@@ -79,7 +86,8 @@ where
         let (cert_chain, private_key) =
             get_certificate(AsRef::<str>::as_ref(&options.target_server), ca);
         log::trace!(
-            "Certificate: {}",
+            "{} - Certificate: {}",
+            uuid,
             cert_chain[0]
                 .0
                 .iter()
@@ -99,7 +107,7 @@ where
                 scenario: "connecting TLS",
             })?;
 
-        log::debug!("TLS stream established");
+        log::debug!("{} - TLS stream established", uuid);
         Ok(Self {
             client_stream,
             server_stream,
