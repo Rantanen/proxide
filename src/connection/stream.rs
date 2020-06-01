@@ -25,16 +25,6 @@ where
             write,
         }
     }
-
-    pub fn new_no_prefix(stream: S) -> Self
-    {
-        let (read, write) = split(stream);
-        Self {
-            prefix: None,
-            read,
-            write,
-        }
-    }
 }
 
 impl<S: AsyncWrite + AsyncRead + Unpin> PrefixedStream<S> {}
