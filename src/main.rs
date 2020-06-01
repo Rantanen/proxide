@@ -1,6 +1,6 @@
 #![allow(clippy::match_bool)]
 
-use clap::{App, AppSettings, Arg, ArgGroup, ArgMatches, SubCommand};
+use clap::ArgMatches;
 use crossterm::{cursor::MoveToPreviousLine, ExecutableCommand};
 use log::error;
 use snafu::{ResultExt, Snafu};
@@ -14,6 +14,7 @@ use std::sync::Arc;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::oneshot;
 
+mod command_line;
 mod connection;
 mod decoders;
 mod error;
@@ -83,116 +84,7 @@ fn proxide_main() -> Result<(), Error>
         .unwrap();
     }
 
-    // Set up the monitor and view commands separately.
-    //
-    // Both of these commands should support the decoder options so we'll want to further process
-    // them before constructing the clap App.
-    let monitor_cmd =
-        SubCommand::with_name("monitor").about("Monitor network traffic using the Proxide UI");
-    let monitor_cmd = add_connection_options(monitor_cmd);
-
-    let view_cmd = SubCommand::with_name("view")
-        .about("View traffic from a session or capture file")
-        .arg(
-            Arg::with_name("file")
-                .short("o")
-                .value_name("file")
-                .required(true)
-                .help("Specify the file to load"),
-        );
-
-    let capture_cmd = SubCommand::with_name("capture")
-        .about("Capture network traffic into a file for later analysis")
-        .arg(
-            Arg::with_name("file")
-                .short("o")
-                .value_name("file")
-                .required(true)
-                .help("Specify the output file"),
-        );
-    let capture_cmd = add_connection_options(capture_cmd);
-
-    let mut app = App::new("Proxide - HTTP2 debugging proxy")
-        .version(env!("CARGO_PKG_VERSION"))
-        .author("Mikko Rantanen <rantanen@jubjubnest.net>")
-        .setting(AppSettings::SubcommandRequiredElseHelp)
-        .subcommand(capture_cmd)
-        .subcommand(
-            SubCommand::with_name("config")
-                .about("Manage Proxide configuration")
-                .subcommand(
-                    SubCommand::with_name("ca")
-                        .about("Manage CA certificates required for debugging TLS traffic")
-                        .arg(
-                            Arg::with_name("cert")
-                                .long("cert")
-                                .value_name("path")
-                                .default_value("proxide_ca.crt")
-                                .help("Specify path to an existing CA certificate file"),
-                        )
-                        .arg(
-                            Arg::with_name("key")
-                                .long("key")
-                                .value_name("path")
-                                .default_value("proxide_ca.key")
-                                .help("Specify path to an existing CA private key file"),
-                        )
-                        .arg(
-                            Arg::with_name("create")
-                                .long("create")
-                                .help("Create a new CA certificate"),
-                        )
-                        .arg(
-                            Arg::with_name("force")
-                                .short("f")
-                                .long("force")
-                                .help("Overwrite existing files")
-                                .requires("create"),
-                        )
-                        .arg(
-                            Arg::with_name("duration")
-                                .long("duration")
-                                .help(
-                                    "Specifies the number of days the new CA certificate is valid",
-                                )
-                                .default_value_if("create", None, "7")
-                                .requires("create")
-                                .validator(|v| {
-                                    v.parse::<u32>()
-                                        .map_err(|_| {
-                                            String::from("duration must be a positive number")
-                                        })
-                                        .map(|_| ())
-                                }),
-                        )
-                        .arg(
-                            Arg::with_name("revoke")
-                                .long("revoke")
-                                .help("Revokes existing Proxide CA certificates from the trusted CA certificate store")
-                                .possible_values(&["user", "system"]),
-                        )
-                        .arg(
-                            Arg::with_name("trust")
-                                .long("trust")
-                                .help("Imports the current Proxide CA certificate to the CA certificate store")
-                                .possible_values(&["user", "system"]),
-                        )
-                        .group(
-                            ArgGroup::with_name("action")
-                                .args(&["create", "revoke", "trust"])
-                                .multiple(true)
-                                .required(true),
-                        ),
-                ),
-        );
-
-    // Add the decoder args to the subcommands before adding the subcommands to the app.
-    for cmd in vec![monitor_cmd, view_cmd]
-        .into_iter()
-        .map(decoders::grpc::setup_args)
-    {
-        app = app.subcommand(cmd);
-    }
+    let app = command_line::setup_app(&[decoders::grpc::setup_args]);
 
     // Parse the command line argument and handle the simple arguments that don't require Proxide
     // to set up the complex bits. Anything handled here should `return` out of the function to
@@ -267,44 +159,6 @@ fn proxide_main() -> Result<(), Error>
     }
 
     Ok(())
-}
-
-fn add_connection_options<'a, 'b>(cmd: App<'a, 'b>) -> App<'a, 'b>
-{
-    cmd.arg(
-        Arg::with_name("listen")
-            .short("l")
-            .value_name("port")
-            .required(true)
-            .help("Specify listening port")
-            .takes_value(true),
-    )
-    .arg(
-        Arg::with_name("target")
-            .short("t")
-            .value_name("host:port")
-            .required(true)
-            .help("Specify target host and port")
-            .takes_value(true),
-    )
-    .arg(
-        Arg::with_name("ca-certificate")
-            .long("ca-certificate")
-            .value_name("path")
-            .required(false)
-            .help("Specify the CA certificate used to sign the generated TLS certificates")
-            .requires("ca-key")
-            .takes_value(true),
-    )
-    .arg(
-        Arg::with_name("ca-key")
-            .long("ca-key")
-            .value_name("path")
-            .required(false)
-            .help("Specify the CA private key used to sign the generated TLS certificates")
-            .requires("ca-certificate")
-            .takes_value(true),
-    )
 }
 
 impl ConnectionOptions
@@ -421,8 +275,12 @@ fn do_config(matches: &ArgMatches) -> Result<(), Error>
                 return Ok(());
             }
 
-            let cert_file = matches.value_of("cert").unwrap_or_else(|| "proxide_ca.crt");
-            let key_file = matches.value_of("key").unwrap_or_else(|| "proxide_ca.key");
+            let cert_file = matches
+                .value_of("ca-certificate")
+                .unwrap_or_else(|| "proxide_ca.crt");
+            let key_file = matches
+                .value_of("ca-key")
+                .unwrap_or_else(|| "proxide_ca.key");
 
             if matches.is_present("create") {
                 // If the user didn't specify --force we'll need to ensure we are not overwriting

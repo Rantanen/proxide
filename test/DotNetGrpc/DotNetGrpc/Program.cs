@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -14,20 +15,6 @@ namespace DotNetGrpc
 {
     class Program : HelloWorld.HelloWorldBase
     {
-        /*
-        const string CERTIFICATE = @"
------BEGIN CERTIFICATE-----
-MIIBfTCCASOgAwIBAgIUNQrfzkBKiMz/u1ar/4BMAhrtXxgwCgYIKoZIzj0EAwIw
-FDESMBAGA1UEAwwJbG9jYWxob3N0MB4XDTIwMDUzMTEwMjAxMFoXDTIxMDUzMTEw
-MjAxMFowFDESMBAGA1UEAwwJbG9jYWxob3N0MFkwEwYHKoZIzj0CAQYIKoZIzj0D
-AQcDQgAEBOfJqV+F/K30yGmuqqHVsC1Z6qSxUHVfC6DmpJAFp5tZTt69Xwp4Dt97
-nNufToTPDui3biImG0XjWFfIfBo7YKNTMFEwHQYDVR0OBBYEFCMNyUvyQfCciXmn
-s5nIhZe0X/g6MB8GA1UdIwQYMBaAFCMNyUvyQfCciXmns5nIhZe0X/g6MA8GA1Ud
-EwEB/wQFMAMBAf8wCgYIKoZIzj0EAwIDSAAwRQIgPnxf/5cCtWKIH8ycXemx4lsR
-xTS3fQvEZnfWKskUElYCIQCb6IUlmbzD6O4XsFzTZqei0vWXEEuy8CKzqd+8DuFQ
-SQ==
------END CERTIFICATE-----";
-        /*/
         private const string CERTIFICATE = @"
 -----BEGIN CERTIFICATE-----
 MIIDCTCCAfGgAwIBAgIUK/Rj+8wx5YNlMiHt0gXFIYGxX5cwDQYJKoZIhvcNAQEL
@@ -50,17 +37,6 @@ BYo8DUErXmDdKbv2hRC0czZTBV5ZG9ItexhY4LqREOnHrGJcJAEFHe2FZ6T01ioz
 -----END CERTIFICATE-----
 ";
 
-        /*
-        const string PRIVATE_KEY = @"
------BEGIN EC PARAMETERS-----
-BggqhkjOPQMBBw==
------END EC PARAMETERS-----
------BEGIN EC PRIVATE KEY-----
-MHcCAQEEILiLMoLa6VPZb/07VarlUK1/KaNP87Fgue1o4vjqte8RoAoGCCqGSM49
-AwEHoUQDQgAEBOfJqV+F/K30yGmuqqHVsC1Z6qSxUHVfC6DmpJAFp5tZTt69Xwp4
-Dt97nNufToTPDui3biImG0XjWFfIfBo7YA==
------END EC PRIVATE KEY-----";
-        /*/
         private const string PRIVATE_KEY = @"
 -----BEGIN PRIVATE KEY-----
 MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDjGCcyUjHhxX7p
@@ -92,28 +68,6 @@ YIASF0UIVSsCfbWh6FOcIHk=
 -----END PRIVATE KEY-----
 ";
 
-        const string CA_CERT = @"-----BEGIN CERTIFICATE-----
-MIIDCTCCAfGgAwIBAgIUK/Rj+8wx5YNlMiHt0gXFIYGxX5cwDQYJKoZIhvcNAQEL
-BQAwFDESMBAGA1UEAwwJbG9jYWxob3N0MB4XDTIwMDUzMDE5MDE0NVoXDTIxMDUz
-MDE5MDE0NVowFDESMBAGA1UEAwwJbG9jYWxob3N0MIIBIjANBgkqhkiG9w0BAQEF
-AAOCAQ8AMIIBCgKCAQEA4xgnMlIx4cV+6YFeJxn/rceb3peIisNuBt5F/4gZ9Ed7
-8habJbStlPW8o9DEcX+AGh7hHY2/QFdx4CvxOhCqRd0G/WUgzNF6JRW/cYMGMjfL
-cELcyGmHfKPXhkBJFoSX1Fs2zwYvdW0WgEiT1VHkARySGCBXGp4J/lADbQFGZDs9
-QInwnd0HTGY5gQxErNTEP88LwxhcFyPI6SgQvyQT2dr3pH2Dw4130U29pik1jiLU
-BW/gyTafTaoG8PyLmmtldg8/7U60aDjenf2S6mprryLRHKXFKp+/JPj9tqIzdQIn
-ggpOLbfq2HOlv0bwEq7cDE5NzaJGsoKlP9qbRomAfQIDAQABo1MwUTAdBgNVHQ4E
-FgQUfoQbvrMauD6gxfFdCRYSuAVeNXAwHwYDVR0jBBgwFoAUfoQbvrMauD6gxfFd
-CRYSuAVeNXAwDwYDVR0TAQH/BAUwAwEB/zANBgkqhkiG9w0BAQsFAAOCAQEAL7bY
-Fav0N4nYuEs3owjmKWmC6IFfBW9RT4atGj6QLPENHJtEOEcgNaTjrCfV3z1diIF3
-CC+MATWRooQEHItbGTQg2wzR684SeFOM0I56jWqJ47IdK2/ikXYeBSGN6+c8HyHV
-pnT0JbAwcYdj/H3o2emHQc9MQcf8p2JFgjVPH5ZAgXwIN9yQDKpKIB++fkyTIFm6
-r7ZMYD3AZJCGCcaUwg4whGxk5tkJ4SgF6dY2kbV4o83KSvuhVq8N1w1LhlgqvgbG
-BYo8DUErXmDdKbv2hRC0czZTBV5ZG9ItexhY4LqREOnHrGJcJAEFHe2FZ6T01ioz
-8K4q5GG2wLjB33yZzw==
------END CERTIFICATE-----
-";
-
-
         static void Main( string[] args )
         {
             // Environment.SetEnvironmentVariable( "http_proxy", "http://127.0.0.1:2222" );
@@ -121,12 +75,9 @@ BYo8DUErXmDdKbv2hRC0czZTBV5ZG9ItexhY4LqREOnHrGJcJAEFHe2FZ6T01ioz
             // Environment.SetEnvironmentVariable( "GRPC_TRACE", "all,-api" );
             // Environment.SetEnvironmentVariable( "GRPC_VERBOSITY", "DEBUG" );
 
-            var ca_cert = File.ReadAllText( @"..\..\..\..\..\src\connection\ca_cert.pem" );
-            var ca_key = File.ReadAllText( @"..\..\..\..\..\src\connection\ca_key.pem" );
+            bool secure = false;
 
-            bool secure = true;
-
-            var clientPort = 8890;
+            var clientPort = 5555;
             var serverPort = 8890;
             if( args.Length > 0 )
                 serverPort = clientPort = int.Parse( args[ 0 ] );
@@ -137,7 +88,7 @@ BYo8DUErXmDdKbv2hRC0czZTBV5ZG9ItexhY4LqREOnHrGJcJAEFHe2FZ6T01ioz
                 ? new SslServerCredentials( new[] {new KeyCertificatePair( CERTIFICATE, PRIVATE_KEY ),} )
                 : ServerCredentials.Insecure;
             var clientCredentials = secure
-                ? new SslCredentials( ca_cert )
+                ? new SslCredentials( GetRootCerts() )
                 : ChannelCredentials.Insecure;
 
             Server server = new Server
@@ -156,7 +107,6 @@ BYo8DUErXmDdKbv2hRC0czZTBV5ZG9ItexhY4LqREOnHrGJcJAEFHe2FZ6T01ioz
             Console.WriteLine( $"Listening on port {serverPort}" );
 
             Channel channel = new Channel( $"localhost:{clientPort}", clientCredentials );
-            // Channel channel = new Channel( $"127.0.0.1:{clientPort}", new SslCredentials() );
             var client = new HelloWorld.HelloWorldClient( channel );
 
             DoCalls( client ).Wait();
@@ -252,6 +202,23 @@ BYo8DUErXmDdKbv2hRC0czZTBV5ZG9ItexhY4LqREOnHrGJcJAEFHe2FZ6T01ioz
                 else if( requestStream.Current.SetValue != null )
                     stored = requestStream.Current.SetValue;
             }
+        }
+
+        public static string GetRootCerts()
+        {
+            X509Store store = new X509Store(StoreName.Root);
+            store.Open( OpenFlags.ReadOnly );
+
+            StringBuilder builder = new StringBuilder();
+            foreach( X509Certificate2 cert in store.Certificates )
+            {
+                builder.AppendLine( "-----BEGIN CERTIFICATE-----" );
+                builder.AppendLine( Convert.ToBase64String( cert.Export( X509ContentType.Cert ),
+                    Base64FormattingOptions.InsertLineBreaks ) );
+                builder.AppendLine( "-----END CERTIFICATE-----" );
+            }
+
+            return builder.ToString();
         }
     }
 }
