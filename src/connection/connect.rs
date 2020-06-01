@@ -1,41 +1,61 @@
 use snafu::ResultExt;
-use std::pin::Pin;
-use std::task::Context;
-use std::task::Poll;
-use tokio::io::{split, AsyncRead, AsyncReadExt, AsyncWrite, ReadHalf, WriteHalf};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::net::TcpStream;
 
-use super::{ClientIoError, Error, Result};
+use super::stream::PrefixedStream;
+use super::{ClientError, ConnectError, IoError, Result, ServerError};
 
-pub struct ConnectData
+pub struct ConnectData<TClient>
 {
-    server: String,
+    pub client_stream: PrefixedStream<TClient>,
+    pub server_stream: TcpStream,
 }
 
-pub async fn handle_connect<T: AsyncRead + AsyncWrite + Unpin>(mut client: &mut T)
-    -> Result<String>
+pub async fn handle_connect<T: AsyncRead + AsyncWrite + Unpin>(
+    mut client: T,
+) -> Result<ConnectData<T>>
 {
     let mut buffer = Vec::new();
-    buffer.resize(255, 0_u8);
-    let mut read = 0;
-    loop {
+    let (host, remainder) = loop {
+        let mut chunk = [0_u8; 256];
         let count = client
-            .read(&mut buffer[read..])
+            .read(&mut chunk)
             .await
-            .context(ClientIoError {
+            .context(IoError {})
+            .context(ClientError {
                 scenario: "reading CONNECT",
             })?;
-        read += count;
-        if &buffer[read - 5..read - 1] == b"\r\n\r\n" {
-            break;
-        }
+        buffer.extend(chunk[..count].iter().copied());
 
-        if read > 1024 {
-            return Err(Error::ClientIoError {
-                scenario: "reading CONNECT (Too large request)",
-                source: std::io::ErrorKind::Other.into(),
-            });
+        let mut headers = [httparse::EMPTY_HEADER; 16];
+        let mut req = httparse::Request::new(&mut headers);
+        let res = req
+            .parse(&buffer)
+            .context(ConnectError {})
+            .context(ClientError {
+                scenario: "parsing CONNECT request",
+            })?;
+        if let httparse::Status::Complete(count) = res {
+            break (req.path.unwrap().to_string(), buffer[count..].to_vec());
         }
-    }
+    };
 
-    Ok("".to_string())
+    let server = TcpStream::connect(AsRef::<str>::as_ref(&host))
+        .await
+        .context(IoError {})
+        .context(ServerError {
+            scenario: "connecting",
+        })?;
+    client
+        .write(b"HTTP/1.1 200 OK\r\n\r\n")
+        .await
+        .context(IoError {})
+        .context(ServerError {
+            scenario: "responding to CONNECT",
+        })?;
+
+    Ok(ConnectData {
+        client_stream: PrefixedStream::new(remainder, client),
+        server_stream: server,
+    })
 }

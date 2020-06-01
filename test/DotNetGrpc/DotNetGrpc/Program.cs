@@ -70,14 +70,14 @@ YIASF0UIVSsCfbWh6FOcIHk=
 
         static void Main( string[] args )
         {
-            // Environment.SetEnvironmentVariable( "http_proxy", "http://127.0.0.1:2222" );
-            // Environment.SetEnvironmentVariable( "https_proxy", "http://127.0.0.1:2222" );
+            Environment.SetEnvironmentVariable( "http_proxy", "http://127.0.0.1:5555" );
+            Environment.SetEnvironmentVariable( "https_proxy", "http://127.0.0.1:5555" );
             // Environment.SetEnvironmentVariable( "GRPC_TRACE", "all,-api" );
             // Environment.SetEnvironmentVariable( "GRPC_VERBOSITY", "DEBUG" );
 
             bool secure = false;
 
-            var clientPort = 5555;
+            var clientPort = 8890;
             var serverPort = 8890;
             if( args.Length > 0 )
                 serverPort = clientPort = int.Parse( args[ 0 ] );

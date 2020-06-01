@@ -30,6 +30,7 @@ where
     TServer: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
     pub async fn new(
+        uuid: Uuid,
         client_addr: SocketAddr,
         client: TClient,
         server: TServer,
@@ -58,13 +59,12 @@ where
 
         // The connection futures are responsible for driving the network communication.
         // Spawn them into a new task to take care of that.
-        let uuid = Uuid::new_v4();
         tokio::spawn({
             let uuid = uuid;
             async move {
                 match server_connection.await {
                     Ok(..) => {}
-                    Err(e) => error!("Server connection failed for connection {}\n{}", uuid, e),
+                    Err(e) => error!("Server connection failed for connection {}; {}", uuid, e),
                 }
             }
         });
@@ -127,7 +127,7 @@ where
                         let ui = ui;
                         match request.execute(ui).await {
                             Ok(_) => {}
-                            Err(e) => error!("Request error for request {}\n{}", uuid, e),
+                            Err(e) => error!("Request error for request {}; {}", uuid, e),
                         }
                     });
                 }

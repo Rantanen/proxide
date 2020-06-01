@@ -35,6 +35,7 @@ pub struct IndexedVec<T>
 #[derive(Serialize, Deserialize, Debug)]
 pub enum Protocol
 {
+    Connect,
     Tls,
     Http2,
 }
@@ -278,6 +279,7 @@ impl std::fmt::Display for Protocol
             f,
             "{}",
             match self {
+                Protocol::Connect => "CONNEcT",
                 Protocol::Tls => "TLS",
                 Protocol::Http2 => "HTTP/2",
             },

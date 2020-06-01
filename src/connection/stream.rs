@@ -25,6 +25,16 @@ where
             write,
         }
     }
+
+    pub fn new_no_prefix(stream: S) -> Self
+    {
+        let (read, write) = split(stream);
+        Self {
+            prefix: None,
+            read,
+            write,
+        }
+    }
 }
 
 impl<S: AsyncWrite + AsyncRead + Unpin> PrefixedStream<S> {}
@@ -35,7 +45,9 @@ impl<S: AsyncRead> AsyncRead for PrefixedStream<S>
         -> Poll<Result<usize>>
     {
         if let Some(p) = &mut self.prefix {
-            if p.len() <= buf.len() {
+            if p.len() == 0 {
+                self.prefix = None;
+            } else if p.len() <= buf.len() {
                 buf[..p.len()].copy_from_slice(&p);
                 let copied = p.len();
                 self.prefix = None;

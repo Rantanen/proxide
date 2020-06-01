@@ -165,32 +165,36 @@ impl ConnectionOptions
 {
     fn resolve(args: &ArgMatches) -> Result<Arc<Self>, Error>
     {
-        let cert_details = match (args.value_of("ca-certificate"), args.value_of("ca-key")) {
-            (None, None) => None,
-            (Some(cert), Some(key)) => Some((cert, key)),
-            _ => unreachable!("Clap let ca-certificate or ca-key through without the other"),
-        };
+        let ca_details = if args.occurrences_of("ca-certificate") != 0 {
+            let cert_details = match (args.value_of("ca-certificate"), args.value_of("ca-key")) {
+                (None, None) => None,
+                (Some(cert), Some(key)) => Some((cert, key)),
+                _ => unreachable!("Clap let ca-certificate or ca-key through without the other"),
+            };
 
-        let ca_details = match cert_details {
-            None => None,
-            Some((cert, key)) => {
-                let mut cert_data = String::new();
-                let mut key_data = String::new();
-                File::open(&cert)
-                    .and_then(|mut file| file.read_to_string(&mut cert_data))
-                    .map_err(|_| Error::ArgumentError {
-                        msg: format!("Could not read CA certificate: '{}'", cert),
-                    })?;
-                File::open(&key)
-                    .and_then(|mut file| file.read_to_string(&mut key_data))
-                    .map_err(|_| Error::ArgumentError {
-                        msg: format!("Could not read CA private key: '{}'", key),
-                    })?;
-                Some(CADetails {
-                    certificate: cert_data,
-                    key: key_data,
-                })
+            match cert_details {
+                None => None,
+                Some((cert, key)) => {
+                    let mut cert_data = String::new();
+                    let mut key_data = String::new();
+                    File::open(&cert)
+                        .and_then(|mut file| file.read_to_string(&mut cert_data))
+                        .map_err(|_| Error::ArgumentError {
+                            msg: format!("Could not read CA certificate: '{}'", cert),
+                        })?;
+                    File::open(&key)
+                        .and_then(|mut file| file.read_to_string(&mut key_data))
+                        .map_err(|_| Error::ArgumentError {
+                            msg: format!("Could not read CA private key: '{}'", key),
+                        })?;
+                    Some(CADetails {
+                        certificate: cert_data,
+                        key: key_data,
+                    })
+                }
             }
+        } else {
+            None
         };
 
         Ok(Arc::new(Self {

@@ -35,3 +35,4 @@ rustls = { version = "0.17", features = [ "dangerous_configuration" ] }
 webpki = "0.21"
 tokio-rustls = "0.13"
 rcgen = { version = "0.8", features = [ "pem", "x509-parser" ] }
+httparse = "1"
