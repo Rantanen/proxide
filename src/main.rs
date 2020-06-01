@@ -165,42 +165,46 @@ impl ConnectionOptions
 {
     fn resolve(args: &ArgMatches) -> Result<Arc<Self>, Error>
     {
-        let ca_details = if args.occurrences_of("ca-certificate") != 0 {
-            let cert_details = match (args.value_of("ca-certificate"), args.value_of("ca-key")) {
-                (None, None) => None,
-                (Some(cert), Some(key)) => Some((cert, key)),
-                _ => unreachable!("Clap let ca-certificate or ca-key through without the other"),
-            };
-
-            match cert_details {
-                None => None,
-                Some((cert, key)) => {
-                    let mut cert_data = String::new();
-                    let mut key_data = String::new();
-                    File::open(&cert)
-                        .and_then(|mut file| file.read_to_string(&mut cert_data))
-                        .map_err(|_| Error::ArgumentError {
-                            msg: format!("Could not read CA certificate: '{}'", cert),
-                        })?;
-                    File::open(&key)
-                        .and_then(|mut file| file.read_to_string(&mut key_data))
-                        .map_err(|_| Error::ArgumentError {
-                            msg: format!("Could not read CA private key: '{}'", key),
-                        })?;
-                    Some(CADetails {
-                        certificate: cert_data,
-                        key: key_data,
-                    })
-                }
-            }
-        } else {
-            None
-        };
+        let ca_details = Self::read_cert(args)?;
 
         Ok(Arc::new(Self {
             listen_port: args.value_of("listen").unwrap().to_string(),
             target_server: args.value_of("target").unwrap().to_string(),
             ca: ca_details,
+        }))
+    }
+
+    fn read_cert(args: &ArgMatches) -> Result<Option<CADetails>, Error>
+    {
+        let (cert, key) = match (args.value_of("ca-certificate"), args.value_of("ca-key")) {
+            (None, None) => return Ok(None),
+            (Some(cert), Some(key)) => (cert, key),
+            _ => unreachable!("Clap let ca-certificate or ca-key through without the other"),
+        };
+
+        // Handle the case where the user didn't explicilty require the CA
+        // certificates and the default ones don't exist.
+        if !Path::new(cert).is_file() || !Path::new(key).is_file() {
+            if args.occurrences_of("ca-certificate") == 0 && args.occurrences_of("ca-key") == 0 {
+                return Ok(None);
+            }
+        }
+
+        let mut cert_data = String::new();
+        let mut key_data = String::new();
+        File::open(&cert)
+            .and_then(|mut file| file.read_to_string(&mut cert_data))
+            .map_err(|_| Error::ArgumentError {
+                msg: format!("Could not read CA certificate: '{}'", cert),
+            })?;
+        File::open(&key)
+            .and_then(|mut file| file.read_to_string(&mut key_data))
+            .map_err(|_| Error::ArgumentError {
+                msg: format!("Could not read CA private key: '{}'", key),
+            })?;
+        Ok(Some(CADetails {
+            certificate: cert_data,
+            key: key_data,
         }))
     }
 }
