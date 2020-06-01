@@ -52,6 +52,14 @@ impl DetailsView
             Some(r) => r,
             None => return,
         };
+        let conn = match ctx
+            .data
+            .connections
+            .get_by_uuid(request.request_data.connection_uuid)
+        {
+            Some(r) => r,
+            None => return,
+        };
 
         let block = create_block("Details");
         f.render_widget(block, chunk);
@@ -78,17 +86,27 @@ impl DetailsView
 
         let text = vec![
             Text::raw("\n"),
-            Text::raw(format!(" Method:     {}\n", request.request_data.method)),
-            Text::raw(format!(" URI:        {}\n", request.request_data.uri)),
+            Text::raw(format!(
+                " Request:    {} {}\n",
+                request.request_data.method, request.request_data.uri
+            )),
+            Text::raw(format!(
+                " Protocol:   {}\n",
+                conn.protocol_stack
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(" -> ")
+            )),
             Text::raw(format!(
                 " Timestamp:  {}\n",
                 request.request_data.start_timestamp.to_string()
             )),
             Text::raw(format!(
-                " Status:     {}\n",
-                request.request_data.status.to_string()
+                " Status:     {} (in {})\n",
+                request.request_data.status.to_string(),
+                duration
             )),
-            Text::raw(format!(" Duration:   {}\n", duration)),
         ];
         let details = Paragraph::new(text.iter());
         f.render_widget(details, details_chunks[0]);

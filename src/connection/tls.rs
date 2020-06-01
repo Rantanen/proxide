@@ -12,17 +12,22 @@ use webpki::{DNSName, DNSNameRef};
 use super::stream::PrefixedStream;
 use super::*;
 
-pub struct TlsProxy<TClient>
+pub struct TlsProxy<TClient, TServer>
 {
     pub client_stream: tokio_rustls::server::TlsStream<PrefixedStream<TClient>>,
-    pub server_stream: tokio_rustls::client::TlsStream<TcpStream>,
+    pub server_stream: tokio_rustls::client::TlsStream<TServer>,
 }
 
-impl<TClient> TlsProxy<TClient>
+impl<TClient, TServer> TlsProxy<TClient, TServer>
 where
     TClient: AsyncRead + AsyncWrite + Unpin,
+    TServer: AsyncRead + AsyncWrite + Unpin,
 {
-    pub async fn new(mut client: TClient, options: Arc<ConnectionOptions>) -> Result<Self>
+    pub async fn new(
+        mut client: TClient,
+        server: TServer,
+        options: Arc<ConnectionOptions>,
+    ) -> Result<Self>
     {
         let ca = match &options.ca {
             None => {
@@ -56,14 +61,8 @@ where
         let server_stream_config = TlsConnector::from(Arc::new(server_stream_config));
 
         log::debug!("Establishing connection to {}", options.target_server);
-        let server_stream = TcpStream::connect(AsRef::<str>::as_ref(&options.target_server))
-            .await
-            .context(IoError {})
-            .context(ServerError {
-                scenario: "connecting",
-            })?;
         let server_stream = server_stream_config
-            .connect(sni.as_ref(), server_stream)
+            .connect(sni.as_ref(), server)
             .await
             .context(IoError {})
             .context(ServerError {
@@ -241,12 +240,6 @@ fn get_certificate(
 
     log::debug!("Creating certificate for '{}'", common_name);
 
-    /*
-    let ca_key = rcgen::KeyPair::from_pem(include_str!("proxide_ca_pkcs.key")).unwrap();
-    let ca_params =
-        rcgen::CertificateParams::from_ca_cert_pem(include_str!("proxide_ca.crt"), ca_key).unwrap();
-    let ca_cert = rcgen::Certificate::from_params(ca_params).unwrap();
-    */
     let ca_key = rcgen::KeyPair::from_pem(&ca.key).unwrap();
     let ca_params = rcgen::CertificateParams::from_ca_cert_pem(&ca.certificate, ca_key).unwrap();
     let ca_cert = rcgen::Certificate::from_params(ca_params).unwrap();
@@ -268,13 +261,4 @@ fn get_certificate(
         ],
         rustls::PrivateKey(cert.serialize_private_key_der()),
     )
-    /*
-    (
-        vec![
-            rustls::Certificate(include_bytes!("proxy_cert.der").to_vec()),
-            // rustls::Certificate(include_bytes!("ca_cert.der").to_vec()),
-        ],
-        rustls::PrivateKey(include_bytes!("proxy_key.der").to_vec()),
-    )
-    */
 }

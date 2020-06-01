@@ -94,8 +94,9 @@ pub async fn run(
     options: Arc<ConnectionOptions>,
     ui: Sender<SessionEvent>,
 ) -> Result<()>
-//) -> Result<http2::Http2Connection<impl AsyncWrite + AsyncRead + Unpin + 'static, TcpStream>>
 {
+    // Peek into the client stream to demux the protocol.
+    let mut protocol_stack = Vec::new();
     let (protocol, client) =
         demux::recognize(client)
             .await
@@ -104,27 +105,31 @@ pub async fn run(
                 scenario: "demuxing stream",
             })?;
 
+    let server = TcpStream::connect(AsRef::<str>::as_ref(&options.target_server))
+        .await
+        .context(IoError {})
+        .context(ServerError {
+            scenario: "connecting",
+        })?;
+
     let ui_clone = ui.clone();
     if protocol == demux::Protocol::TLS {
+        protocol_stack.push(Protocol::Tls);
         log::info!("New TLS connection from {}", src_addr);
 
-        let streams = tls::TlsProxy::new(client, options.clone()).await?;
+        let streams = tls::TlsProxy::new(client, server, options.clone()).await?;
         let mut conn = http2::Http2Connection::new(
             src_addr,
             streams.client_stream,
             streams.server_stream,
+            protocol_stack,
             ui_clone,
         )
         .await?;
         conn.run(ui).await?;
     } else {
-        let server = TcpStream::connect(&options.target_server)
-            .await
-            .context(IoError {})
-            .context(ServerError {
-                scenario: "connecting",
-            })?;
-        let mut conn = http2::Http2Connection::new(src_addr, client, server, ui_clone).await?;
+        let mut conn =
+            http2::Http2Connection::new(src_addr, client, server, protocol_stack, ui_clone).await?;
         conn.run(ui).await?;
     }
 

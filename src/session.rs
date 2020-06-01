@@ -32,11 +32,19 @@ pub struct IndexedVec<T>
     pub filters: HashMap<FilterType, Box<dyn ItemFilter<T>>>,
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+pub enum Protocol
+{
+    Tls,
+    Http2,
+}
+
 #[derive(Serialize, Deserialize)]
 pub struct ConnectionData
 {
     pub uuid: Uuid,
     pub client_addr: SocketAddr,
+    pub protocol_stack: Vec<Protocol>,
     pub start_timestamp: DateTime<Local>,
     pub end_timestamp: Option<DateTime<Local>>,
     pub status: Status,
@@ -259,5 +267,20 @@ impl HasKey for EncodedRequest
     fn key(&self) -> Uuid
     {
         self.request_data.uuid
+    }
+}
+
+impl std::fmt::Display for Protocol
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result
+    {
+        write!(
+            f,
+            "{}",
+            match self {
+                Protocol::Tls => "TLS",
+                Protocol::Http2 => "HTTP/2",
+            },
+        )
     }
 }

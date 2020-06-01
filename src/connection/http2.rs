@@ -33,9 +33,12 @@ where
         client_addr: SocketAddr,
         client: TClient,
         server: TServer,
+        mut protocol_stack: Vec<Protocol>,
         ui: Sender<SessionEvent>,
     ) -> Result<Self>
     {
+        protocol_stack.push(Protocol::Http2);
+
         // This is a debugging proxy so we don't need to be supporting hundreds of concurrent
         // requests. We can opt for a bit larger window size to avoid slowing down the connection.
         let client_connection = server::Builder::new()
@@ -84,6 +87,7 @@ where
 
         ui.send(SessionEvent::NewConnection(NewConnectionEvent {
             uuid: conn.uuid,
+            protocol_stack,
             client_addr,
             timestamp: Local::now(),
         }))

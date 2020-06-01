@@ -24,6 +24,7 @@ pub enum SessionEvent
 pub struct NewConnectionEvent
 {
     pub uuid: Uuid,
+    pub protocol_stack: Vec<Protocol>,
     pub client_addr: SocketAddr,
     pub timestamp: DateTime<Local>,
 }
@@ -122,6 +123,7 @@ impl Session
     {
         let data = ConnectionData {
             uuid: e.uuid,
+            protocol_stack: e.protocol_stack,
             client_addr: e.client_addr,
             start_timestamp: e.timestamp,
             end_timestamp: None,
