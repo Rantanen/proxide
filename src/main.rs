@@ -1,13 +1,14 @@
 #![allow(clippy::match_bool)]
 
-use clap::{App, AppSettings, Arg, ArgMatches, SubCommand};
+use clap::{App, AppSettings, Arg, ArgGroup, ArgMatches, SubCommand};
 use crossterm::{cursor::MoveToPreviousLine, ExecutableCommand};
 use log::error;
 use snafu::{ResultExt, Snafu};
 use std::fs::File;
 use std::io::stdout;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::net::SocketAddr;
+use std::path::Path;
 use std::sync::mpsc::Sender;
 use std::sync::Arc;
 use tokio::net::{TcpListener, TcpStream};
@@ -44,14 +45,31 @@ pub enum Error
         source: session::serialization::SerializationError,
     },
 
-    #[snafu(display("Invalid configuration: {}", reason))]
-    ConfigurationError
+    #[snafu(display("{}", msg))]
+    ArgumentError
     {
-        reason: &'static str
+        msg: String
+    },
+
+    #[snafu(display("{}", msg))]
+    RuntimeError
+    {
+        msg: String
     },
 }
 
-fn main() -> Result<(), Error>
+fn main()
+{
+    match proxide_main() {
+        Ok(_) => (),
+        Err(e) => {
+            eprintln!("{}", e);
+            std::process::exit(1)
+        }
+    }
+}
+
+fn proxide_main() -> Result<(), Error>
 {
     #[cfg(debug_assertions)]
     {
@@ -77,9 +95,9 @@ fn main() -> Result<(), Error>
         .about("View traffic from a session or capture file")
         .arg(
             Arg::with_name("file")
+                .short("o")
                 .value_name("file")
                 .required(true)
-                .index(1)
                 .help("Specify the file to load"),
         );
 
@@ -90,7 +108,6 @@ fn main() -> Result<(), Error>
                 .short("o")
                 .value_name("file")
                 .required(true)
-                .index(1)
                 .help("Specify the output file"),
         );
     let capture_cmd = add_connection_options(capture_cmd);
@@ -99,7 +116,75 @@ fn main() -> Result<(), Error>
         .version(env!("CARGO_PKG_VERSION"))
         .author("Mikko Rantanen <rantanen@jubjubnest.net>")
         .setting(AppSettings::SubcommandRequiredElseHelp)
-        .subcommand(capture_cmd);
+        .subcommand(capture_cmd)
+        .subcommand(
+            SubCommand::with_name("config")
+                .about("Manage Proxide configuration")
+                .subcommand(
+                    SubCommand::with_name("ca")
+                        .about("Manage CA certificates required for debugging TLS traffic")
+                        .arg(
+                            Arg::with_name("cert")
+                                .long("cert")
+                                .value_name("path")
+                                .default_value("proxide_ca.crt")
+                                .help("Specify path to an existing CA certificate file"),
+                        )
+                        .arg(
+                            Arg::with_name("key")
+                                .long("key")
+                                .value_name("path")
+                                .default_value("proxide_ca.key")
+                                .help("Specify path to an existing CA private key file"),
+                        )
+                        .arg(
+                            Arg::with_name("create")
+                                .long("create")
+                                .help("Create a new CA certificate"),
+                        )
+                        .arg(
+                            Arg::with_name("force")
+                                .short("f")
+                                .long("force")
+                                .help("Overwrite existing files")
+                                .requires("create"),
+                        )
+                        .arg(
+                            Arg::with_name("duration")
+                                .long("duration")
+                                .help(
+                                    "Specifies the number of days the new CA certificate is valid",
+                                )
+                                .default_value_if("create", None, "7")
+                                .requires("create")
+                                .validator(|v| {
+                                    v.parse::<u32>()
+                                        .map_err(|_| {
+                                            String::from("duration must be a positive number")
+                                        })
+                                        .map(|_| ())
+                                }),
+                        )
+                        .arg(
+                            Arg::with_name("revoke")
+                                .long("revoke")
+                                .help("Revokes existing Proxide CA certificates from the trusted CA certificate store")
+                                .possible_values(&["user", "system"]),
+                        )
+                        .arg(
+                            Arg::with_name("trust")
+                                .long("trust")
+                                .help("Imports the current Proxide CA certificate to the CA certificate store")
+                                .possible_values(&["user", "system"]),
+                        )
+                        .group(
+                            ArgGroup::with_name("action")
+                                .args(&["create", "revoke", "trust"])
+                                .multiple(true)
+                                .required(true),
+                        ),
+                ),
+        );
 
     // Add the decoder args to the subcommands before adding the subcommands to the app.
     for cmd in vec![monitor_cmd, view_cmd]
@@ -107,6 +192,15 @@ fn main() -> Result<(), Error>
         .map(decoders::grpc::setup_args)
     {
         app = app.subcommand(cmd);
+    }
+
+    // Parse the command line argument and handle the simple arguments that don't require Proxide
+    // to set up the complex bits. Anything handled here should `return` out of the function to
+    // prevent the more complex bits from being performed.
+    let matches = app.get_matches();
+    match matches.subcommand() {
+        ("config", Some(matches)) => return do_config(matches),
+        _ => (), // Ignore other subcommands for now.
     }
 
     // We'll have the channels present all the time to simplify setup.  The parameters are free to
@@ -122,7 +216,6 @@ fn main() -> Result<(), Error>
     //
     // The subcommands are responsible for figuring out how the initial session is constructed as
     // well as for giving us back the argument matches so we can initialize the decoders with them.
-    let matches = app.get_matches();
     let (session, matches) = match matches.subcommand() {
         ("monitor", Some(sub_m)) => {
             // Monitor sets up the network tack.
@@ -200,6 +293,7 @@ fn add_connection_options<'a, 'b>(cmd: App<'a, 'b>) -> App<'a, 'b>
             .value_name("path")
             .required(false)
             .help("Specify the CA certificate used to sign the generated TLS certificates")
+            .requires("ca-key")
             .takes_value(true),
     )
     .arg(
@@ -208,6 +302,7 @@ fn add_connection_options<'a, 'b>(cmd: App<'a, 'b>) -> App<'a, 'b>
             .value_name("path")
             .required(false)
             .help("Specify the CA private key used to sign the generated TLS certificates")
+            .requires("ca-certificate")
             .takes_value(true),
     )
 }
@@ -219,11 +314,7 @@ impl ConnectionOptions
         let cert_details = match (args.value_of("ca-certificate"), args.value_of("ca-key")) {
             (None, None) => None,
             (Some(cert), Some(key)) => Some((cert, key)),
-            _ => {
-                return Err(Error::ConfigurationError {
-                    reason: "ca-certificate and ca-key options must be used together",
-                })
-            }
+            _ => unreachable!("Clap let ca-certificate or ca-key through without the other"),
         };
 
         let ca_details = match cert_details {
@@ -233,13 +324,13 @@ impl ConnectionOptions
                 let mut key_data = String::new();
                 File::open(&cert)
                     .and_then(|mut file| file.read_to_string(&mut cert_data))
-                    .map_err(|_| Error::ConfigurationError {
-                        reason: "Could not read CA certificate",
+                    .map_err(|_| Error::ArgumentError {
+                        msg: format!("Could not read CA certificate: '{}'", cert),
                     })?;
                 File::open(&key)
                     .and_then(|mut file| file.read_to_string(&mut key_data))
-                    .map_err(|_| Error::ConfigurationError {
-                        reason: "Could not read CA key",
+                    .map_err(|_| Error::ArgumentError {
+                        msg: format!("Could not read CA private key: '{}'", key),
                     })?;
                 Some(CADetails {
                     certificate: cert_data,
@@ -303,4 +394,119 @@ fn new_connection(
             }
         });
     }
+}
+
+fn do_config(matches: &ArgMatches) -> Result<(), Error>
+{
+    const CERT_COMMON_NAME: &str = "UNSAFE Proxide Root Certificate";
+
+    match matches.subcommand() {
+        ("ca", Some(matches)) => {
+            // Handle revoke first.
+            if matches.is_present("revoke") {
+                std::process::Command::new("certutil")
+                    .arg("-delstore")
+                    .arg("-user")
+                    .arg("Root")
+                    .arg(CERT_COMMON_NAME)
+                    .spawn()
+                    .and_then(|mut process| process.wait())
+                    .map_err(|e| Error::RuntimeError {
+                        msg: format!("Failed to revoke the certificates with certutil: {}", e),
+                    })?;
+            }
+
+            // If 'revoke' was the only command, we'll interrupt here.
+            if !(matches.is_present("create") || matches.is_present("trust")) {
+                return Ok(());
+            }
+
+            let cert_file = matches.value_of("cert").unwrap_or_else(|| "proxide_ca.crt");
+            let key_file = matches.value_of("key").unwrap_or_else(|| "proxide_ca.key");
+
+            if matches.is_present("create") {
+                // If the user didn't specify --force we'll need to ensure we are not overwriting
+                // any existing files during create.
+                if !matches.is_present("force") {
+                    for file in &[cert_file, key_file] {
+                        if Path::new(file).is_file() {
+                            return Err(Error::ArgumentError {
+                                msg: format!(
+                                    "File '{}' already exists. Use --force to overwrite it.",
+                                    file
+                                ),
+                            });
+                        }
+                    }
+                }
+
+                // Set up the rcgen certificate parameters for the new certificate.
+                //
+                // Note that at least on Windows the common name is used to later find and revoke
+                // the certificate so it shouldn't be changed without a good reason. If it's
+                // changed here, it would be best if new versions of Proxide still supported the
+                // old names in the 'revoke' command.
+                let mut ca_params = rcgen::CertificateParams::new(vec![]);
+                ca_params.distinguished_name = rcgen::DistinguishedName::new();
+                ca_params
+                    .distinguished_name
+                    .push(rcgen::DnType::OrganizationName, "UNSAFE");
+                ca_params
+                    .distinguished_name
+                    .push(rcgen::DnType::CommonName, "UNSAFE Proxide Root Certificate"); // See the comment above.
+                let ca_cert = rcgen::Certificate::from_params(ca_params).unwrap();
+
+                File::create(cert_file)
+                    .map_err(|_| Error::ArgumentError {
+                        msg: format!(
+                            "Could not open the certificate file '{}' for writing",
+                            cert_file
+                        ),
+                    })?
+                    .write_all(ca_cert.serialize_pem().unwrap().as_bytes())
+                    .map_err(|_| Error::ArgumentError {
+                        msg: format!("Could not write certificate to '{}'", cert_file),
+                    })?;
+                File::create(key_file)
+                    .map_err(|_| Error::ArgumentError {
+                        msg: format!(
+                            "Could not open the private key file '{}' for writing",
+                            key_file
+                        ),
+                    })?
+                    .write_all(ca_cert.serialize_private_key_pem().as_bytes())
+                    .map_err(|_| Error::ArgumentError {
+                        msg: format!("Could not write private key to '{}'", key_file),
+                    })?;
+            }
+
+            // Technically if all the user wanted to do was '--create' we wouldn't really need to
+            // do this check, but it doesn't really hurt either, unless you count the extra disk
+            // access (which I don't!).
+            for file in &[cert_file, key_file] {
+                if !Path::new(file).is_file() {
+                    return Err(Error::ArgumentError {
+                        msg: format!("Could not open '{}', use --create if you need to create a new CA certificate", file),
+                    });
+                }
+            }
+
+            // Trust the certificate if the user asked for that.
+            if matches.is_present("trust") {
+                std::process::Command::new("certutil")
+                    .arg("-addstore")
+                    .arg("-user")
+                    .arg("Root")
+                    .arg(cert_file)
+                    .spawn()
+                    .and_then(|mut process| process.wait())
+                    .map_err(|e| Error::RuntimeError {
+                        msg: format!("Failed to import the certificate with certutil: {}", e),
+                    })?;
+            }
+        }
+        (cmd, _) => unreachable!("Unknown command: {}", cmd),
+    }
+
+    Ok(())
 }
