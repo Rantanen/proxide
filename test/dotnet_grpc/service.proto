@@ -1,0 +1,19 @@
+
+syntax = "proto3";
+
+import "types.proto";
+
+package DotNet.Service;
+
+message HelloWorldRequest {
+    string name = 1;
+    string language = 2;
+}
+
+message HelloWorldResponse {
+    Types.HelloWorld hello = 1;
+}
+
+service TestService {
+    rpc HelloWorld(HelloWorldRequest) returns (HelloWorldResponse);
+}

@@ -1,0 +1,9 @@
+
+syntax = "proto3";
+
+package DotNet.Types;
+
+message HelloWorld {
+    string greeting = 1;
+    string name = 2;
+}
