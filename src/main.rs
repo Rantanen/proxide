@@ -90,6 +90,9 @@ fn proxide_main() -> Result<(), Error>
     // to set up the complex bits. Anything handled here should `return` out of the function to
     // prevent the more complex bits from being performed.
     let matches = app.get_matches();
+
+    // We'll get more subcommands here in the future so match makes sense.
+    #[allow(clippy::single_match)]
     match matches.subcommand() {
         ("config", Some(matches)) => return do_config(matches),
         _ => (), // Ignore other subcommands for now.
@@ -248,7 +251,6 @@ fn new_connection(
     // Process the new connection by spawning a new tokio task. This allows the original task to
     // process more connections.
     if let Ok((socket, src_addr)) = result {
-        let options = options.clone();
         tokio::spawn(async move {
             match run(socket, src_addr, options, tx).await {
                 Ok(..) => {}

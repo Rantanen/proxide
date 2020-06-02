@@ -95,7 +95,9 @@ where
     client_stream_config
         .set_single_cert(cert_chain, private_key)
         .unwrap();
-    alpn.map(|alpn| client_stream_config.set_protocols(&[alpn.to_vec()]));
+    if let Some(alpn) = alpn {
+        client_stream_config.set_protocols(&[alpn.to_vec()]);
+    }
     let client_stream_acceptor = TlsAcceptor::from(Arc::new(client_stream_config));
     let client_stream = client_stream_acceptor
         .accept(PrefixedStream::new(client_data, client))
@@ -112,23 +114,28 @@ where
     })
 }
 
+struct ClientHelloData
+{
+    sni: Option<DNSName>,
+    alpn: Vec<Vec<u8>>,
+}
 struct ClientHelloCapture
 {
-    channel: Mutex<mpsc::Sender<(Option<DNSName>, Vec<Vec<u8>>)>>,
+    channel: Mutex<mpsc::Sender<ClientHelloData>>,
 }
 impl ResolvesServerCert for ClientHelloCapture
 {
     fn resolve(&self, client_hello: ClientHello) -> Option<CertifiedKey>
     {
         log::debug!("Capturing ClientHello from cert resolver");
-        let _ = self.channel.lock().unwrap().send((
-            client_hello.server_name().map(|m| m.to_owned()),
-            client_hello
+        let _ = self.channel.lock().unwrap().send(ClientHelloData {
+            sni: client_hello.server_name().map(|m| m.to_owned()),
+            alpn: client_hello
                 .alpn()
-                .into_iter()
-                .flat_map(|arr| arr.into_iter().map(|v| (*v).into()))
+                .iter()
+                .flat_map(|arr| arr.iter().map(|v| (*v).into()))
                 .collect::<Vec<_>>(),
-        ));
+        });
         None
     }
 }
@@ -169,7 +176,7 @@ where
     // Process data until we get the ClientHello.
     let mut hello_data: Vec<u8> = Vec::new();
     let mut buffer = [0_u8; 2048];
-    let (sni, alpn) = loop {
+    let ClientHelloData { sni, alpn } = loop {
         log::debug!("Waiting for client bytes for ClientHello");
         let read = client
             .read(&mut buffer)

@@ -35,7 +35,10 @@ impl<S: AsyncRead> AsyncRead for PrefixedStream<S>
         -> Poll<Result<usize>>
     {
         if let Some(p) = &mut self.prefix {
-            if p.len() == 0 {
+            if p.is_empty() {
+                // If the Vec was empty, we'll want to avoid returning zero bytes. Tokio considers
+                // a return of zero bytes as stream having ended, which is not what is happening
+                // here.
                 self.prefix = None;
             } else if p.len() <= buf.len() {
                 buf[..p.len()].copy_from_slice(&p);
