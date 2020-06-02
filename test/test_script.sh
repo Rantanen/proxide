@@ -31,9 +31,14 @@ notice "Testing plain connection directly through Proxide"
 dotnet run -- --connect localhost:5555 --server-port 8888
 success ...OK
 
+# The extra slash in the certificate subjects ('//CN') is required to fix
+# a known issue in Git Bash on Windows where single '/' gets expanded to
+# a file path.
+
+
 # Test servers with RSA key
 notice "Testing TLS connection directly through Proxide with RSA cert"
-openssl req -x509 -newkey rsa:2048 -keyout test_server.key -out test_server.crt -days 365 -nodes -subj '/CN=localhost'
+openssl req -x509 -newkey rsa:2048 -keyout test_server.key -out test_server.crt -days 365 -nodes -subj "//CN=localhost"
 dotnet run -- --connect localhost:5555 \
     --server-port 8888 \
     --ca-cert ../../test_ca.crt \
@@ -44,7 +49,7 @@ success ...OK
 # Test servers with EC key
 notice "Testing TLS connection directly through Proxide with EC cert"
 openssl ecparam -genkey -name prime256v1 -out test_server.key
-openssl req -new -sha256 -key test_server.key -out test_server.csr -subj '/CN=localhost'
+openssl req -new -sha256 -key test_server.key -out test_server.csr -subj "//CN=localhost"
 openssl req -x509 -sha256 -days 365 -key test_server.key -in test_server.csr -out test_server.crt
 dotnet run -- --connect localhost:5555 \
     --server-port 8888 \
