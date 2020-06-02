@@ -12,6 +12,7 @@ jobs:
     name: Tests
     env:
       RUST_BACKTRACE: 1
+      TERM: xterm
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -36,6 +37,13 @@ jobs:
 
       - name: Build
         run: cargo build
+
+      - name: Tests
+        shell: bash
+        run: |
+          cd test
+          ./test_script.sh
+
 
   style:
     name: Fmt & Clippy
