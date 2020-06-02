@@ -184,10 +184,10 @@ impl ConnectionOptions
 
         // Handle the case where the user didn't explicilty require the CA
         // certificates and the default ones don't exist.
-        if !Path::new(cert).is_file() || !Path::new(key).is_file() {
-            if args.occurrences_of("ca-certificate") == 0 && args.occurrences_of("ca-key") == 0 {
-                return Ok(None);
-            }
+        if (!Path::new(cert).is_file() || !Path::new(key).is_file())
+            && (args.occurrences_of("ca-certificate") == 0 && args.occurrences_of("ca-key") == 0)
+        {
+            return Ok(None);
         }
 
         let mut cert_data = String::new();

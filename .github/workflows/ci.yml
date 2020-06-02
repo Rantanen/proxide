@@ -9,7 +9,7 @@ on:
 jobs:
 
   test:
-    name: test
+    name: Tests
     env:
       RUST_BACKTRACE: 1
     runs-on: ${{ matrix.os }}
@@ -38,7 +38,7 @@ jobs:
         run: cargo build
 
   style:
-    name: rustfmt
+    name: Fmt & Clippy
     runs-on: ubuntu-latest
     steps:
       - name: Checkout

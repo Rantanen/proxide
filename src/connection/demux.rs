@@ -31,5 +31,5 @@ pub async fn recognize(
         _ => return Err(std::io::ErrorKind::InvalidData.into()),
     };
 
-    Ok((protocol, PrefixedStream::new(buffer.into(), stream)))
+    Ok((protocol, PrefixedStream::new(buffer.to_vec(), stream)))
 }
