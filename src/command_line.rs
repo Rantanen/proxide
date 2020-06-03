@@ -15,11 +15,11 @@ pub fn setup_app(decoders: &[DecoderFn]) -> App<'static, 'static>
         .subcommand(
             SubCommand::with_name("view")
                 .about("View traffic from a session or capture file")
-                .connection_options()
+                .json_options()
                 .decoder_options(decoders)
                 .arg(
                     Arg::with_name("file")
-                        .short("o")
+                        .short("f")
                         .value_name("file")
                         .required(true)
                         .help("Specify the file to load"),
@@ -30,6 +30,7 @@ pub fn setup_app(decoders: &[DecoderFn]) -> App<'static, 'static>
             SubCommand::with_name("monitor")
                 .about("Monitor network traffic using the Proxide UI")
                 .connection_options()
+                .json_options()
                 .decoder_options(decoders),
         )
         // Capture subcommand.
@@ -37,6 +38,7 @@ pub fn setup_app(decoders: &[DecoderFn]) -> App<'static, 'static>
             SubCommand::with_name("capture")
                 .about("Capture network traffic into a file for later analysis")
                 .connection_options()
+                .json_options()
                 .arg(
                     Arg::with_name("file")
                         .short("o")
@@ -153,6 +155,13 @@ trait AppEx<'a, 'b>: Sized
                     .default_value("proxide_ca.key")
                     .help("Specify the CA private key used by Proxide to sign the generated TLS certificates"),
             )
+    }
+
+    fn json_options(self) -> App<'a, 'b>
+    {
+        self.app().arg(Arg::with_name("json").long("json").help(
+            "Output in JSON format. Disables UI when used with 'view' or 'monitor' commands.",
+        ))
     }
 
     fn decoder_options(self, decoders: &[DecoderFn]) -> App<'a, 'b>

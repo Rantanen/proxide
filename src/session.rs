@@ -85,7 +85,9 @@ pub struct MessageData
     #[serde(with = "http_serde::header_map")]
     pub trailers: HeaderMap,
 
+    #[serde(with = "serde_base64")]
     pub content: BytesMut,
+
     pub start_timestamp: Option<DateTime<Local>>,
     pub end_timestamp: Option<DateTime<Local>>,
     pub part: RequestPart,
@@ -284,5 +286,35 @@ impl std::fmt::Display for Protocol
                 Protocol::Http2 => "HTTP/2",
             },
         )
+    }
+}
+
+mod serde_base64
+{
+    use bytes::BytesMut;
+    pub fn serialize<S: serde::Serializer>(data: &BytesMut, s: S) -> Result<S::Ok, S::Error>
+    {
+        use serde::Serialize;
+
+        if s.is_human_readable() {
+            s.serialize_str(&base64::encode(&data))
+        } else {
+            data.serialize(s)
+        }
+    }
+
+    pub fn deserialize<'de, D: serde::Deserializer<'de>>(d: D) -> Result<BytesMut, D::Error>
+    {
+        use serde::Deserialize;
+
+        if d.is_human_readable() {
+            String::deserialize(d)
+                .and_then(|s| {
+                    base64::decode(&s).map_err(|err| serde::de::Error::custom(err.to_string()))
+                })
+                .map(|b| BytesMut::from(b.as_slice()))
+        } else {
+            BytesMut::deserialize(d)
+        }
     }
 }

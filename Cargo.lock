@@ -846,6 +846,7 @@ dependencies = [
 name = "proxide"
 version = "0.1.3"
 dependencies = [
+ "base64",
  "bytes",
  "chrono",
  "clap",
@@ -863,6 +864,7 @@ dependencies = [
  "rmp-serde",
  "rustls",
  "serde",
+ "serde_json",
  "simplelog",
  "snafu",
  "tokio",
@@ -1081,6 +1083,17 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "serde_json"
+version = "1.0.53"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "993948e75b189211a9b31a7528f950c6adc21f9720b6438ff80a7fa2f864cea2"
+dependencies = [
+ "itoa",
+ "ryu",
+ "serde",
 ]
 
 [[package]]

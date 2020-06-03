@@ -18,6 +18,7 @@ mod command_line;
 mod connection;
 mod decoders;
 mod error;
+mod json;
 mod search;
 mod session;
 mod ui;
@@ -90,11 +91,9 @@ fn proxide_main() -> Result<(), Error>
     // to set up the complex bits. Anything handled here should `return` out of the function to
     // prevent the more complex bits from being performed.
     let matches = app.get_matches();
-
-    // We'll get more subcommands here in the future so match makes sense.
-    #[allow(clippy::single_match)]
     match matches.subcommand() {
         ("config", Some(matches)) => return do_config(matches),
+        ("view", Some(matches)) if matches.is_present("json") => return json::view(matches),
         _ => (), // Ignore other subcommands for now.
     }
 
