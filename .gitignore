@@ -6,3 +6,15 @@ bin
 obj
 /protos
 *.csproj.user
+
+trace.log
+
+# Various test and default certificates.
+proxide_ca.crt
+proxide_ca.key
+test_ca.crt
+test_ca.key
+test/dotnet_grpc/test_server.crt
+test/dotnet_grpc/test_server.csr
+test/dotnet_grpc/test_server.key
+
