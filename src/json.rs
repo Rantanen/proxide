@@ -66,7 +66,7 @@ fn get_message_data(
                     dec.name(),
                     dec.decode(msg)
                         .into_iter()
-                        .map(|text| text_to_string(text))
+                        .map(text_to_string)
                         .collect::<String>(),
                 )
             })

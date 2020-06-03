@@ -257,6 +257,10 @@ pub fn open_target_file(
     };
 
     // Write the file header
+    //
+    // We want to keep this as a match-statement to ensure new output formats need to be taken into
+    // account here.
+    #[allow(clippy::redundant_cloure)]
     match format {
         OutputFormat::MessagePack => {
             match file.write_all(filetype) {
