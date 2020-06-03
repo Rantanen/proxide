@@ -1,13 +1,7 @@
 use clap::{App, AppSettings, Arg, ArgGroup, SubCommand};
 
-type DecoderFn = for<'a, 'b> fn(App<'a, 'b>) -> App<'a, 'b>;
-pub fn setup_app(decoders: &[DecoderFn]) -> App<'static, 'static>
+pub fn setup_app() -> App<'static, 'static>
 {
-    // Set up the monitor and view commands separately.
-    //
-    // Both of these commands should support the decoder options so we'll want to further process
-    // them before constructing the clap App.
-
     App::new("Proxide - HTTP2 debugging proxy")
         .version(env!("CARGO_PKG_VERSION"))
         .author("Mikko Rantanen <rantanen@jubjubnest.net>")
@@ -16,7 +10,7 @@ pub fn setup_app(decoders: &[DecoderFn]) -> App<'static, 'static>
             SubCommand::with_name("view")
                 .about("View traffic from a session or capture file")
                 .json_options()
-                .decoder_options(decoders)
+                .decoder_options()
                 .arg(
                     Arg::with_name("file")
                         .short("f")
@@ -31,7 +25,7 @@ pub fn setup_app(decoders: &[DecoderFn]) -> App<'static, 'static>
                 .about("Monitor network traffic using the Proxide UI")
                 .connection_options()
                 .json_options()
-                .decoder_options(decoders),
+                .decoder_options(),
         )
         // Capture subcommand.
         .subcommand(
@@ -164,9 +158,9 @@ trait AppEx<'a, 'b>: Sized
         ))
     }
 
-    fn decoder_options(self, decoders: &[DecoderFn]) -> App<'a, 'b>
+    fn decoder_options(self) -> App<'a, 'b>
     {
-        decoders.iter().fold(self.app(), |app, init| init(app))
+        crate::decoders::setup_args(self.app())
     }
 }
 

@@ -85,7 +85,7 @@ fn proxide_main() -> Result<(), Error>
         .unwrap();
     }
 
-    let app = command_line::setup_app()?;
+    let app = command_line::setup_app();
 
     // Parse the command line argument and handle the simple arguments that don't require Proxide
     // to set up the complex bits. Anything handled here should `return` out of the function to
