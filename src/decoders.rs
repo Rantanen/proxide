@@ -89,6 +89,7 @@ pub trait DecoderFactory
 /// Generic decoder trait that is invoked to acquire the decoded output.
 pub trait Decoder
 {
+    fn name(&self) -> &'static str;
     fn decode(&self, msg: &MessageData) -> Vec<Text>;
     fn index(&self, msg: &MessageData) -> Vec<String>;
 }
@@ -96,6 +97,11 @@ pub trait Decoder
 struct HeaderDecoder;
 impl Decoder for HeaderDecoder
 {
+    fn name(&self) -> &'static str
+    {
+        "headers"
+    }
+
     fn decode(&self, msg: &MessageData) -> Vec<Text>
     {
         self.process(

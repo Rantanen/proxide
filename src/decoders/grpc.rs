@@ -130,8 +130,14 @@ impl GrpcDecoder
         values
     }
 }
+
 impl Decoder for GrpcDecoder
 {
+    fn name(&self) -> &'static str
+    {
+        "grpc"
+    }
+
     fn decode(&self, msg: &MessageData) -> Vec<Text>
     {
         let mut output = vec![];

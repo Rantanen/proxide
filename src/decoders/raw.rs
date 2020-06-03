@@ -19,6 +19,11 @@ impl DecoderFactory for RawDecoderFactory
 pub struct RawDecoder;
 impl Decoder for RawDecoder
 {
+    fn name(&self) -> &'static str
+    {
+        "raw"
+    }
+
     fn decode(&self, msg: &MessageData) -> Vec<Text>
     {
         vec![Text::raw(format!("{:?}", msg.content))]
