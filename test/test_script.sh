@@ -12,6 +12,9 @@ function success {
     tput sgr0
 }
 
+TEST_OUTPUT=$PWD/test.cap
+rm -rf $TEST_OUTPUT
+
 # Ensure Proxide is built so when we run it, it doesn't need to compile
 # itself and starts fast. This is important since we run it in the background.
 pushd ../
@@ -19,7 +22,7 @@ cargo build
 
 # Listen for unencrypted connections.
 cargo run -- config ca --ca-cert test_ca.crt --ca-key test_ca.key --create --force
-cargo run -- capture -l 5555 -t localhost:8888 -o capture.cap --ca-cert test_ca.crt --ca-key test_ca.key &
+cargo run -- capture -l 5555 -t localhost:8888 -f $TEST_OUTPUT --ca-cert test_ca.crt --ca-key test_ca.key --json &
 PROXIDE_PID=$!
 notice "Proxide started with PID $PROXIDE_PID. If the tests fail, the process might be left behind"
 popd
@@ -29,6 +32,9 @@ pushd dotnet_grpc
 # Test servers withotu TLS
 notice "Testing plain connection directly through Proxide"
 dotnet run -- --connect localhost:5555 --server-port 8888
+grep -a MessageDone $TEST_OUTPUT
+grep -a RequestDone $TEST_OUTPUT
+echo > $TEST_OUTPUT
 success ...OK
 
 # The extra slash in the certificate subjects ('//CN') is required to fix
@@ -44,6 +50,9 @@ dotnet run -- --connect localhost:5555 \
     --ca-cert ../../test_ca.crt \
     --server-cert test_server.crt \
     --server-key test_server.key
+grep -a MessageDone $TEST_OUTPUT
+grep -a RequestDone $TEST_OUTPUT
+echo > $TEST_OUTPUT
 success ...OK
 
 # Test servers with EC key
@@ -56,12 +65,18 @@ dotnet run -- --connect localhost:5555 \
     --ca-cert ../../test_ca.crt \
     --server-cert test_server.crt \
     --server-key test_server.key
+grep -a MessageDone $TEST_OUTPUT
+grep -a RequestDone $TEST_OUTPUT
+echo > $TEST_OUTPUT
 success ...OK
 
 # Test CONNECT proxy.
 notice "Testing plain connection using Proxide as a CONNECT proxy"
 http_proxy="http://localhost:5555" dotnet run -- --connect localhost:8888 \
     --server-port 8888
+grep MessageDone $TEST_OUTPUT
+grep RequestDone $TEST_OUTPUT
+echo > $TEST_OUTPUT
 success ...OK
 
 # Test CONNECT proxy with TLS
@@ -71,6 +86,9 @@ https_proxy=http://localhost:5555 dotnet run -- --connect localhost:8888 \
     --ca-cert ../../test_ca.crt \
     --server-cert test_server.crt \
     --server-key test_server.key
+grep MessageDone $TEST_OUTPUT
+grep RequestDone $TEST_OUTPUT
+echo > $TEST_OUTPUT
 success ...OK
 
 popd
@@ -79,4 +97,5 @@ kill $PROXIDE_PID
 sleep 0.1
 notice "Proxide PID $PROXIDE_PID killed"
 success "Tests OK!"
+rm -rf $TEST_OUTPUT
 

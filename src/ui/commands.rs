@@ -135,7 +135,10 @@ pub fn clear_session(ctx: &mut UiContext)
 pub fn export_session(ctx: &UiContext)
 {
     let filename = format!("session-{}.txt", Local::now().format("%H_%M_%S"));
-    match ctx.data.write_to_file(&filename) {
+    match ctx
+        .data
+        .write_to_file(&filename, session::serialization::OutputFormat::MessagePack)
+    {
         Ok(_) => toast::show_message(format!("Exported session to '{}'", filename)),
         Err(e) => toast::show_error(e.to_string()),
     }

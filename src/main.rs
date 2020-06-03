@@ -121,18 +121,34 @@ fn proxide_main() -> Result<(), Error>
         }
         ("capture", Some(sub_m)) => {
             let filename = sub_m.value_of("file").unwrap();
+            let format = match sub_m.is_present("json") {
+                true => session::serialization::OutputFormat::Json,
+                false => session::serialization::OutputFormat::MessagePack,
+            };
+
+            let stdout_data = filename == "-";
+            // If the user is writing the output data to stdout, we don't want to clobber that with
+            // status updates.
+            let status_cb: fn(&session::serialization::CaptureStatus) = match stdout_data {
+                true => |_| (),
+                false => |status| {
+                    let _ = stdout().execute(MoveToPreviousLine(1));
+                    println!(
+                        "Received {} requests in {} connections. Total of {} bytes of data.",
+                        status.requests, status.connections, status.data
+                    );
+                },
+            };
 
             // Monitor sets up the network tack.
             let options = ConnectionOptions::resolve(&sub_m)?;
             std::thread::spawn(move || tokio_main(options, abort_rx, ui_tx));
-            println!("... Waiting for connections.");
-            return session::serialization::capture_to_file(ui_rx, abort_tx, &filename, |status| {
-                let _ = stdout().execute(MoveToPreviousLine(1));
-                println!(
-                    "Received {} requests in {} connections. Total of {} bytes of data.",
-                    status.requests, status.connections, status.data
-                );
-            })
+            if !stdout_data {
+                println!("... Waiting for connections.");
+            }
+            return session::serialization::capture_to_file(
+                ui_rx, abort_tx, &filename, format, status_cb,
+            )
             .context(SerializationError {});
         }
         ("view", Some(sub_m)) => {

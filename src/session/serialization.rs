@@ -47,6 +47,13 @@ pub struct CaptureStatus
     pub data: usize,
 }
 
+#[derive(Clone, Copy)]
+pub enum OutputFormat
+{
+    MessagePack,
+    Json,
+}
+
 pub fn read_file<P: AsRef<Path> + ToString>(filename: &P) -> Result<Session, SerializationError>
 {
     let mut file = std::fs::File::open(filename).context(IoError {
@@ -82,22 +89,14 @@ pub fn read_file<P: AsRef<Path> + ToString>(filename: &P) -> Result<Session, Ser
 
 impl Session
 {
-    pub fn write_to_file<P: AsRef<Path> + ToString>(
+    pub fn write_to_file(
         &self,
-        filename: &P,
+        filename: &str,
+        format: OutputFormat,
     ) -> Result<(), SerializationError>
     {
-        let mut file = open_target_file(filename, b"PROXIDE-SESSIONv01")?;
-
-        // We are using FormatError here even if the error message for that states
-        // 'deserializing'. Since we are controlling the data, a serialization error shouldn't
-        // occur here.
-        match self.serialize(&mut rmp_serde::Serializer::new(&mut file)) {
-            Ok(_) => Ok(()),
-            Err(e) => Err(SerializationError::FormatError {
-                source: Box::new(e),
-            }),
-        }
+        let file = open_target_file(filename, format, b"PROXIDE-SESSIONv01")?;
+        serialize_format(file, self, format)
     }
 }
 
@@ -112,10 +111,11 @@ pub fn read_session_file(file: std::fs::File) -> Result<Session, SerializationEr
         .context(FormatError {})
 }
 
-pub fn capture_to_file<F: FnMut(&CaptureStatus), P: AsRef<Path> + ToString>(
+pub fn capture_to_file<F: FnMut(&CaptureStatus)>(
     rx: Receiver<SessionEvent>,
     abort: Sender<()>,
-    filename: &P,
+    filename: &str,
+    format: OutputFormat,
     mut status_callback: F,
 ) -> Result<(), SerializationError>
 {
@@ -129,7 +129,7 @@ pub fn capture_to_file<F: FnMut(&CaptureStatus), P: AsRef<Path> + ToString>(
         }
     });
 
-    let mut file = open_target_file(filename, b"PROXIDE-CAPTUREv01")?;
+    let mut file = open_target_file(filename, format, b"PROXIDE-CAPTUREv01")?;
     let mut buffer: Vec<u8> = Vec::new();
     let mut status = CaptureStatus::default();
     while let Ok(event) = rx.recv() {
@@ -142,26 +142,40 @@ pub fn capture_to_file<F: FnMut(&CaptureStatus), P: AsRef<Path> + ToString>(
         }
 
         // Print errors out, but otherwise ignore them.
-        if let Err(e) = event.serialize(&mut rmp_serde::Serializer::new(&mut buffer)) {
+        if let Err(e) = serialize_format(&mut buffer, event, format) {
             eprintln!("{}", e);
         } else {
-            // Convert the data length as varint (each byte has 7 bytes of payload and the MSB
-            // indicates whether the length continues in the next byte.
-            let mut len_buffer: Vec<u8> = Vec::new();
-            let mut len = buffer.len();
-            while len >= 0x80 {
-                len_buffer.push((len & 0x7f | 0x80) as u8);
-                len >>= 7;
-            }
-            len_buffer.push(len as u8);
-
-            // Write the event. Length followed by the payload.
-            file.write_all(&len_buffer)
-                .and_then(|_| file.write_all(&buffer))
+            match format {
+                OutputFormat::Json => writeln!(
+                    file,
+                    "{}",
+                    std::str::from_utf8(&buffer)
+                        .expect("JSON serialization produced invalid UTF-8")
+                )
                 .context(IoError {
                     operation: "writing",
                     file: filename.to_string(),
-                })?;
+                })?,
+                OutputFormat::MessagePack => {
+                    // Convert the data length as varint (each byte has 7 bytes of payload and the MSB
+                    // indicates whether the length continues in the next byte.
+                    let mut len_buffer: Vec<u8> = Vec::new();
+                    let mut len = buffer.len();
+                    while len >= 0x80 {
+                        len_buffer.push((len & 0x7f | 0x80) as u8);
+                        len >>= 7;
+                    }
+                    len_buffer.push(len as u8);
+
+                    // Write the event. Length followed by the payload.
+                    file.write_all(&len_buffer)
+                        .and_then(|_| file.write_all(&buffer))
+                        .context(IoError {
+                            operation: "writing",
+                            file: filename.to_string(),
+                        })?;
+                }
+            }
             status_callback(&status);
             buffer.clear();
         }
@@ -222,33 +236,42 @@ pub fn read_capture_file(mut file: std::fs::File) -> Result<Session, Serializati
     }
 }
 
-pub fn open_target_file<P: AsRef<Path> + ToString>(
-    filename: &P,
+pub fn open_target_file(
+    filename: &str,
+    format: OutputFormat,
     filetype: &[u8; TYPE_LENGTH + VERSION_LENGTH],
-) -> Result<std::fs::File, SerializationError>
+) -> Result<Box<dyn Write>, SerializationError>
 {
-    let mut file = match std::fs::File::create(&filename) {
-        Ok(f) => f,
-        Err(e) => {
-            return Err(SerializationError::IoError {
-                operation: "opening",
-                file: filename.to_string(),
-                source: e,
-            });
-        }
+    let mut file: Box<dyn Write> = match filename {
+        "-" => Box::new(std::io::stdout()),
+        _ => match std::fs::File::create(&filename) {
+            Ok(f) => Box::new(f),
+            Err(e) => {
+                return Err(SerializationError::IoError {
+                    operation: "opening",
+                    file: filename.to_string(),
+                    source: e,
+                });
+            }
+        },
     };
 
     // Write the file header
-    match file.write_all(filetype) {
-        Ok(_) => {}
-        Err(e) => {
-            return Err(SerializationError::IoError {
-                operation: "writing",
-                file: filename.to_string(),
-                source: e,
-            })
+    match format {
+        OutputFormat::MessagePack => {
+            match file.write_all(filetype) {
+                Ok(_) => {}
+                Err(e) => {
+                    return Err(SerializationError::IoError {
+                        operation: "writing",
+                        file: filename.to_string(),
+                        source: e,
+                    })
+                }
+            };
         }
-    };
+        _ => (),
+    }
 
     Ok(file)
 }
@@ -278,4 +301,24 @@ pub mod opt_header_map
         let helper = Option::deserialize(deserializer)?;
         Ok(helper.map(|Helper(external)| external))
     }
+}
+
+fn serialize_format(
+    file: impl Write,
+    data: impl Serialize,
+    format: OutputFormat,
+) -> Result<(), SerializationError>
+{
+    // We are using FormatError here even if the error message for that states 'deserializing'.
+    // Since we are controlling the data, a serialization error shouldn't occur here so we
+    // don't _really_ care about an error message; This is essentially just an unwrap.
+    match format {
+        OutputFormat::MessagePack => data
+            .serialize(&mut rmp_serde::Serializer::new(file))
+            .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send>),
+        OutputFormat::Json => data
+            .serialize(&mut serde_json::Serializer::new(file))
+            .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send>),
+    }
+    .map_err(|source| SerializationError::FormatError { source })
 }

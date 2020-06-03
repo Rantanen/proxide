@@ -35,7 +35,7 @@ pub fn setup_app() -> App<'static, 'static>
                 .json_options()
                 .arg(
                     Arg::with_name("file")
-                        .short("o")
+                        .short("f")
                         .value_name("file")
                         .required(true)
                         .help("Specify the output file"),
