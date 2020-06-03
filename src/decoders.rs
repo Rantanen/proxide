@@ -28,6 +28,20 @@ pub enum Error
 
 type Result<S, E = Error> = std::result::Result<S, E>;
 
+pub fn setup_args<'a, 'b>(app: clap::App<'a, 'b>) -> clap::App<'a, 'b>
+{
+    grpc::setup_args(app)
+}
+
+pub fn get_decoders(matches: &clap::ArgMatches) -> Result<Decoders, Error>
+{
+    let mut decoders = vec![];
+    decoders.push(raw::initialize(&matches)?);
+    decoders.push(grpc::initialize(&matches)?);
+
+    Ok(Decoders::new(decoders.into_iter().filter_map(|o| o)))
+}
+
 pub struct Decoders
 {
     factories: Vec<Box<dyn DecoderFactory>>,

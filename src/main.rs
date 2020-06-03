@@ -85,7 +85,7 @@ fn proxide_main() -> Result<(), Error>
         .unwrap();
     }
 
-    let app = command_line::setup_app(&[decoders::grpc::setup_args]);
+    let app = command_line::setup_app()?;
 
     // Parse the command line argument and handle the simple arguments that don't require Proxide
     // to set up the complex bits. Anything handled here should `return` out of the function to
@@ -144,10 +144,7 @@ fn proxide_main() -> Result<(), Error>
         (_, _) => panic!("Sub command not handled!"),
     };
 
-    let mut decoders = vec![];
-    decoders.push(decoders::raw::initialize(&matches).context(DecoderError {})?);
-    decoders.push(decoders::grpc::initialize(&matches).context(DecoderError {})?);
-    let decoders = decoders::Decoders::new(decoders.into_iter().filter_map(|o| o));
+    let decoders = decoders::get_decoders(&matches).context(DecoderError {})?;
 
     // Run the UI on the current thread.
     //
