@@ -18,7 +18,7 @@ mod controls;
 mod menus;
 mod prelude;
 mod state;
-mod toast;
+pub mod toast;
 mod views;
 
 use state::{HandleResult, ProxideUi, UiEvent};

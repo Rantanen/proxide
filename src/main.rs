@@ -227,31 +227,58 @@ impl ConnectionOptions
 #[tokio::main]
 async fn tokio_main(
     options: Arc<ConnectionOptions>,
-    mut abort_rx: oneshot::Receiver<()>,
+    abort_rx: oneshot::Receiver<()>,
     ui_tx: Sender<session::events::SessionEvent>,
 ) -> Result<(), Error>
 {
-    // We'll want to liten for both IPv4 and IPv6. These days 'localhost' will first resolve to the
+    // We'll want to listen for both IPv4 and IPv6. These days 'localhost' will first resolve to the
     // IPv6 address if that is available. If we did not bind to it, all the connections would first
     // need to timeout there before the Ipv4 would be attempted as a fallback.
-    let mut listener_ipv4 = TcpListener::bind(format!("0.0.0.0:{}", &options.listen_port))
+    let listener_ipv4 = TcpListener::bind(format!("0.0.0.0:{}", &options.listen_port))
         .await
-        .unwrap();
-    let mut listener_ipv6 = TcpListener::bind(format!("[::1]:{}", &options.listen_port))
+        .ok();
+    let listener_ipv6 = TcpListener::bind(format!("[::1]:{}", &options.listen_port))
         .await
-        .unwrap();
+        .ok();
 
-    // Loop until the abort signal is received.
-    loop {
-        tokio::select! {
-            _ = &mut abort_rx => {
-                log::info!("tokio_main done");
-                break Ok(());
-            },
-            result = listener_ipv4.accept() => new_connection(ui_tx.clone(), result, options.clone()),
-            result = listener_ipv6.accept() => new_connection(ui_tx.clone(), result, options.clone()),
-        }
+    // Ensure we bound at least one of the sockets.
+    if listener_ipv4.is_none() && listener_ipv6.is_none() {
+        return Err(Error::RuntimeError {
+            msg: "Could not bind to either IPv4 or IPv6 address".to_string(),
+        });
     }
+
+    // Start the accept-tasks.
+    match listener_ipv4 {
+        None => ui::toast::show_error("Could not bind to IPv4"),
+        Some(listener) => spawn_accept(listener, options.clone(), ui_tx.clone()),
+    }
+    match listener_ipv6 {
+        None => ui::toast::show_error("Could not bind to IPv6"),
+        Some(listener) => spawn_accept(listener, options.clone(), ui_tx.clone()),
+    }
+
+    // Wait for an abort event to quit the thread.
+    //
+    // Once the tokio_main exits, the main program will exit. The spawned tasks
+    // won't keep the process alive.
+    let _ = abort_rx.await;
+    log::info!("tokio_main done");
+    Ok(())
+}
+
+fn spawn_accept(
+    mut listener: TcpListener,
+    options: Arc<ConnectionOptions>,
+    ui_tx: Sender<session::events::SessionEvent>,
+)
+{
+    tokio::spawn(async move {
+        loop {
+            let ui_tx = ui_tx.clone();
+            new_connection(ui_tx, listener.accept().await, options.clone());
+        }
+    });
 }
 
 fn new_connection(
