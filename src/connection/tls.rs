@@ -7,14 +7,13 @@ use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
 use tokio_rustls::{TlsAcceptor, TlsConnector};
-use uuid::Uuid;
 use webpki::{DNSName, DNSNameRef};
 
 use super::stream::PrefixedStream;
 use super::*;
 
 pub async fn handle<TClient, TServer>(
-    uuid: Uuid,
+    details: &mut ConnectionDetails,
     streams: Streams<TClient, TServer>,
     options: Arc<ConnectionOptions>,
 ) -> Result<
@@ -27,6 +26,7 @@ where
     TClient: AsyncRead + AsyncWrite + Unpin,
     TServer: AsyncRead + AsyncWrite + Unpin,
 {
+    details.protocol_stack.push(Protocol::Tls);
     let Streams { mut client, server } = streams;
 
     let ca = match &options.ca {
@@ -45,28 +45,49 @@ where
         sni,
         alpn,
     } = resolve_client_hello(&mut client).await?;
-    log::debug!("{} - Client SNI='{:?}', ALPN='{:?}'", uuid, sni, alpn);
+    log::debug!(
+        "{} - Client SNI='{:?}', ALPN='{:?}'",
+        details.uuid,
+        sni,
+        alpn
+    );
 
     // Connect to the server.
 
-    // Resolve the server hostname from the SNI.
-    log::debug!("{} - Final target server='{}", uuid, options.target_server);
+    // If there is opaque redirect in place, use that as the outgoing SNI.
+    let outgoing_sni = if let Some(redirect_sni) = &details.opaque_redirect {
+        // Split the port off. That's not needed for the SNI.
+        let redirect_sni = redirect_sni
+            .split(':')
+            .next()
+            .expect("Any string has at least one (empty) segment");
 
+        DNSNameRef::try_from_ascii_str(redirect_sni)
+            .context(DNSError {})
+            .context(ConfigurationError {
+                reason: "Invalid target server",
+            })?
+    } else {
+        sni.as_ref()
+    };
+
+    // We'll avoid validating the server certificates, since we don't really know what certs the
+    // client trusts.
     let mut server_stream_config = ClientConfig::new();
     server_stream_config.set_protocols(&alpn);
-    DangerousClientConfig {
+    let mut dangerous_config = DangerousClientConfig {
         cfg: &mut server_stream_config,
-    }
-    .set_certificate_verifier(Arc::new(NoVerify));
+    };
+    dangerous_config.set_certificate_verifier(Arc::new(NoVerify));
     let server_stream_config = TlsConnector::from(Arc::new(server_stream_config));
 
     log::debug!(
         "{} - Establishing connection to {}",
-        uuid,
+        details.uuid,
         options.target_server
     );
     let server_stream = server_stream_config
-        .connect(sni.as_ref(), server)
+        .connect(outgoing_sni, server)
         .await
         .context(IoError {})
         .context(ServerError {
@@ -76,21 +97,21 @@ where
     let alpn = server_stream.get_ref().1.get_alpn_protocol();
     log::debug!(
         "{} - Server connection done; ALPN='{:?}'",
-        uuid,
+        details.uuid,
         alpn.map(|o| String::from_utf8_lossy(o))
     );
 
-    let mut client_stream_config = ServerConfig::new(NoClientAuth::new());
-    let (cert_chain, private_key) = get_certificate(AsRef::<str>::as_ref(&sni), ca);
-    log::trace!(
-        "{} - Certificate: {}",
-        uuid,
-        cert_chain[0]
-            .0
-            .iter()
-            .map(|u| format!("{:02x} ", u))
-            .collect::<String>()
+    // Establish the client connection.
+
+    let host_for_cert = AsRef::<str>::as_ref(&sni);
+    log::debug!(
+        "{} - Creating certificate for '{}'",
+        details.uuid,
+        host_for_cert
     );
+    let (cert_chain, private_key) = get_certificate(host_for_cert, ca);
+
+    let mut client_stream_config = ServerConfig::new(NoClientAuth::new());
     client_stream_config
         .set_single_cert(cert_chain, private_key)
         .unwrap();
@@ -106,7 +127,10 @@ where
             scenario: "connecting TLS",
         })?;
 
-    log::debug!("{} - TLS stream established", uuid);
+    log::debug!(
+        "{} - TLS streams established with client and server",
+        details.uuid
+    );
     Ok(Streams {
         client: client_stream,
         server: server_stream,
@@ -126,7 +150,7 @@ impl ResolvesServerCert for ClientHelloCapture
 {
     fn resolve(&self, client_hello: ClientHello) -> Option<CertifiedKey>
     {
-        log::debug!("Capturing ClientHello from cert resolver");
+        log::trace!("Capturing ClientHello from cert resolver");
         let _ = self.channel.lock().unwrap().send(ClientHelloData {
             sni: client_hello.server_name().map(|m| m.to_owned()),
             alpn: client_hello
@@ -176,7 +200,7 @@ where
     let mut hello_data: Vec<u8> = Vec::new();
     let mut buffer = [0_u8; 2048];
     let ClientHelloData { sni, alpn } = loop {
-        log::debug!("Waiting for client bytes for ClientHello");
+        log::trace!("Waiting for client bytes for ClientHello");
         let read = client
             .read(&mut buffer)
             .await
@@ -192,7 +216,7 @@ where
                 });
         }
         let mut packet: &[u8] = &buffer[..read];
-        log::debug!("Got {} bytes for ClientHello: {:?}", read, &buffer[..read]);
+        log::trace!("Got {} bytes for ClientHello: {:?}", read, &buffer[..read]);
 
         hello_data.extend(packet);
         hello_session
@@ -216,7 +240,6 @@ where
             .context(ClientError {
                 scenario: "parsing ClientHello",
             })?;
-        log::debug!("SNI hostname? '{:?}'", hello_session.get_sni_hostname());
     };
 
     let sni = match sni {
@@ -243,14 +266,6 @@ fn get_certificate(
     ca: &CADetails,
 ) -> (Vec<rustls::Certificate>, rustls::PrivateKey)
 {
-    // Split the port off. That's not needed for the certificate.
-    let common_name = common_name
-        .split(':')
-        .next()
-        .expect("Any string has at least one (empty) segment");
-
-    log::debug!("Creating certificate for '{}'", common_name);
-
     let ca_key = rcgen::KeyPair::from_pem(&ca.key).unwrap();
     let ca_params = rcgen::CertificateParams::from_ca_cert_pem(&ca.certificate, ca_key).unwrap();
     let ca_cert = rcgen::Certificate::from_params(ca_params).unwrap();

@@ -17,10 +17,9 @@ use uuid::Uuid;
 use super::*;
 
 pub async fn handle<TClient, TServer>(
-    uuid: Uuid,
+    mut details: ConnectionDetails,
     client_addr: SocketAddr,
     streams: Streams<TClient, TServer>,
-    mut protocol_stack: Vec<Protocol>,
     ui: Sender<SessionEvent>,
 ) -> Result<()>
 where
@@ -28,7 +27,7 @@ where
     TServer: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
     let Streams { client, server } = streams;
-    protocol_stack.push(Protocol::Http2);
+    details.protocol_stack.push(Protocol::Http2);
 
     // This is a debugging proxy so we don't need to be supporting hundreds of concurrent
     // requests. We can opt for a bit larger window size to avoid slowing down the connection.
@@ -50,7 +49,7 @@ where
     // The connection futures are responsible for driving the network communication.
     // Spawn them into a new task to take care of that.
     tokio::spawn({
-        let uuid = uuid;
+        let uuid = details.uuid;
         async move {
             match server_connection.await {
                 Ok(..) => {}
@@ -69,8 +68,8 @@ where
             })?;
 
     ui.send(SessionEvent::NewConnection(NewConnectionEvent {
-        uuid,
-        protocol_stack,
+        uuid: details.uuid,
+        protocol_stack: details.protocol_stack,
         client_addr,
         timestamp: Local::now(),
     }))
@@ -82,7 +81,8 @@ where
         let ui = ui.clone();
         let client_connection = &mut client_connection;
         let server_stream = &mut server_stream;
-        let uuid = uuid;
+        let uuid = details.uuid;
+        let authority = details.opaque_redirect;
         async move {
             // The client_connection will produce individual HTTP request that we'll accept.
             // These requests will be handled in parallel by spawning them into their own
@@ -92,9 +92,16 @@ where
                     request.context(H2Error {}).context(ClientError {
                         scenario: "processing request",
                     })?;
+                log::debug!("Request: {:?}", client_request);
 
-                let request =
-                    ProxyRequest::new(uuid, client_request, client_response, server_stream, &ui)?;
+                let request = ProxyRequest::new(
+                    uuid,
+                    authority.clone(),
+                    client_request,
+                    client_response,
+                    server_stream,
+                    &ui,
+                )?;
 
                 let ui = ui.clone();
                 tokio::spawn(async move {
@@ -115,7 +122,7 @@ where
     // alternatively an error happened and we'll terminate it). The final status value depends
     // on whether there was an error or not.
     ui.send(SessionEvent::ConnectionClosed {
-        uuid,
+        uuid: details.uuid,
         status: match r {
             Ok(_) => Status::Succeeded,
             Err(_) => Status::Failed,
@@ -139,6 +146,7 @@ impl ProxyRequest
 {
     pub fn new(
         connection_uuid: Uuid,
+        authority: Option<String>,
         client_request: Request<RecvStream>,
         client_response: SendResponse<Bytes>,
         server_stream: &mut client::SendRequest<Bytes>,
@@ -146,7 +154,31 @@ impl ProxyRequest
     ) -> Result<ProxyRequest>
     {
         let uuid = Uuid::new_v4();
-        let (client_head, client_request) = client_request.into_parts();
+        let (mut client_head, client_request) = client_request.into_parts();
+
+        // Check if we'll need to overwrite the authority.
+        if let Some(authority) = authority {
+            log::debug!(
+                "{}:{} - Replacing authority in URI {} with {}",
+                connection_uuid,
+                uuid,
+                client_head.uri,
+                authority
+            );
+            let mut uri_parts = client_head.uri.into_parts();
+            uri_parts.authority = Some(
+                http::uri::Authority::from_maybe_shared(authority)
+                    .context(UriError {})
+                    .context(ConfigurationError {
+                        reason: "invalid target server",
+                    })?,
+            );
+            client_head.uri = http::uri::Uri::from_parts(uri_parts)
+                .context(UriPartsError {})
+                .context(ConfigurationError {
+                    reason: "invalid target server",
+                })?;
+        }
 
         ui.send(SessionEvent::NewRequest(NewRequestEvent {
             connection_uuid,
