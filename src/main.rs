@@ -192,11 +192,8 @@ impl ConnectionOptions
 
     fn read_cert(args: &ArgMatches) -> Result<Option<CADetails>, Error>
     {
-        let (cert, key) = match (args.value_of("ca-certificate"), args.value_of("ca-key")) {
-            (None, None) => return Ok(None),
-            (Some(cert), Some(key)) => (cert, key),
-            _ => unreachable!("Clap let ca-certificate or ca-key through without the other"),
-        };
+        let cert = args.value_of("ca-certificate").unwrap_or("proxide_ca.crt");
+        let key = args.value_of("ca-key").unwrap_or("proxide_ca.key");
 
         // Handle the case where the user didn't explicilty require the CA
         // certificates and the default ones don't exist.
