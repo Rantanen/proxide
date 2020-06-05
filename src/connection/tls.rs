@@ -81,8 +81,7 @@ where
     );
 
     let mut client_stream_config = ServerConfig::new(NoClientAuth::new());
-    let (cert_chain, private_key) =
-        get_certificate(AsRef::<str>::as_ref(&options.target_server), ca);
+    let (cert_chain, private_key) = get_certificate(AsRef::<str>::as_ref(&sni), ca);
     log::trace!(
         "{} - Certificate: {}",
         uuid,
@@ -268,9 +267,9 @@ fn get_certificate(
         .push(rcgen::DnType::CommonName, common_name);
     let cert = rcgen::Certificate::from_params(cert_params).unwrap();
     (
-        vec![
-            rustls::Certificate(cert.serialize_der_with_signer(&ca_cert).unwrap()), //
-        ],
+        vec![rustls::Certificate(
+            cert.serialize_der_with_signer(&ca_cert).unwrap(),
+        )],
         rustls::PrivateKey(cert.serialize_private_key_der()),
     )
 }
