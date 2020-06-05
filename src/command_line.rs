@@ -65,20 +65,24 @@ pub fn setup_app() -> App<'static, 'static>
                         .arg(
                             Arg::with_name("revoke")
                                 .long("revoke")
+                                .takes_value(true)
+                                .min_values(0)
                                 .help(
                                     "Revokes existing Proxide CA certificates \
                                    from the trusted CA certificate store",
                                 )
-                                .possible_values(&["user", "system"]),
+                                .possible_values(&["user", "system", "all"]),
                         )
                         .arg(
                             Arg::with_name("trust")
                                 .long("trust")
+                                .takes_value(true)
+                                .min_values(0)
                                 .help(
                                     "Imports the current Proxide CA certificate \
                                    to the CA certificate store",
                                 )
-                                .possible_values(&["user", "system"]),
+                                .possible_values(&["user", "system", "all"]),
                         )
                         .group(
                             ArgGroup::with_name("action")
