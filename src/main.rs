@@ -86,7 +86,11 @@ fn proxide_main() -> Result<(), Error>
         .unwrap();
     }
 
-    let app = command_line::setup_app();
+    let commit = option_env!("GITHUB_REF")
+        .map(|c| &c[..7])
+        .unwrap_or("dev build");
+    let version = format!("{} ({})", env!("CARGO_PKG_VERSION"), commit);
+    let app = command_line::setup_app(&version);
 
     // Parse the command line argument and handle the simple arguments that don't require Proxide
     // to set up the complex bits. Anything handled here should `return` out of the function to

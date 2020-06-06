@@ -6,10 +6,10 @@ macro_rules! long {
     };
 }
 
-pub fn setup_app() -> App<'static, 'static>
+pub fn setup_app<'a>(version: &'a str) -> App<'a, 'a>
 {
     App::new("Proxide - HTTP2 debugging proxy")
-        .version(env!("CARGO_PKG_VERSION"))
+        .version(version)
         .author("Mikko Rantanen <rantanen@jubjubnest.net>")
         .setting(AppSettings::SubcommandRequiredElseHelp)
         .global_setting(AppSettings::UnifiedHelpMessage)
