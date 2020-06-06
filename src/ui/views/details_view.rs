@@ -3,43 +3,31 @@ use tui::widgets::Paragraph;
 use uuid::Uuid;
 
 use super::MessageView;
-use crate::session::RequestPart;
+use crate::session::{EncodedRequest, RequestPart};
 
 #[derive(Clone, Default)]
-pub struct DetailsView
+pub struct DetailsView;
+impl DetailsView
 {
-    request: Uuid,
-}
-impl<B: Backend> View<B> for DetailsView
-{
-    fn draw(&mut self, ctx: &UiContext, f: &mut Frame<B>, chunk: Rect)
+    pub fn on_input<B: Backend>(
+        &mut self,
+        req: &EncodedRequest,
+        ctx: &UiContext,
+        e: CTEvent,
+        _size: Rect,
+    ) -> Option<HandleResult<B>>
     {
-        self.draw_control(self.request, ctx, f, chunk)
-    }
-
-    fn on_input(&mut self, _session: &UiContext, _e: CTEvent, _size: Rect) -> HandleResult<B>
-    {
-        HandleResult::Ignore
-    }
-
-    fn on_change(&mut self, _ctx: &UiContext, state_changed: &SessionChange) -> bool
-    {
-        match state_changed {
-            SessionChange::NewConnection { .. } | SessionChange::NewRequest { .. } => false,
-            SessionChange::Request { request }
-            | SessionChange::NewMessage { request, .. }
-            | SessionChange::Message { request, .. } => *request == self.request,
+        if let CTEvent::Key(key) = e {
+            match key.code {
+                KeyCode::Char('q') => self.create_message_view(req, ctx, RequestPart::Request),
+                KeyCode::Char('e') => self.create_message_view(req, ctx, RequestPart::Response),
+                _ => None,
+            }
+        } else {
+            None
         }
     }
 
-    fn help_text(&self, _session: &UiContext, _size: Rect) -> String
-    {
-        String::new()
-    }
-}
-
-impl DetailsView
-{
     pub fn draw_control<B: Backend>(
         &mut self,
         request: Uuid,
@@ -123,5 +111,19 @@ impl DetailsView
             offset: 0,
         }
         .draw(ctx, f, req_resp_chunks[1]);
+    }
+
+    fn create_message_view<B: Backend>(
+        &mut self,
+        req: &EncodedRequest,
+        ctx: &UiContext,
+        part: RequestPart,
+    ) -> Option<HandleResult<B>>
+    {
+        Some(HandleResult::PushView(Box::new(MessageView {
+            request: req.request_data.uuid,
+            part,
+            offset: 0,
+        })))
     }
 }

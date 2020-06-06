@@ -7,10 +7,7 @@ use std::net::SocketAddr;
 use uuid::Uuid;
 
 pub mod events;
-pub mod filters;
 pub mod serialization;
-
-use filters::{FilterType, ItemFilter};
 
 #[derive(Serialize, Deserialize, Default)]
 pub struct Session
@@ -24,12 +21,6 @@ pub struct IndexedVec<T>
 {
     pub items: Vec<T>,
     pub items_by_uuid: HashMap<Uuid, usize>,
-
-    #[serde(skip)]
-    pub filtered_items: Vec<usize>,
-
-    #[serde(skip, default = "HashMap::new")]
-    pub filters: HashMap<FilterType, Box<dyn ItemFilter<T>>>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -108,14 +99,6 @@ pub enum RequestPart
     Response,
 }
 
-impl Session
-{
-    fn post_deserialize(&mut self)
-    {
-        self.requests.post_deserialize();
-    }
-}
-
 impl MessageData
 {
     pub fn new(part: RequestPart) -> Self
@@ -148,20 +131,12 @@ impl<T> IndexedVec<T>
     pub fn push(&mut self, uuid: Uuid, item: T)
     {
         self.items_by_uuid.insert(uuid, self.items.len());
-        if self.filters.iter().all(|(_, f)| f.filter(&item)) {
-            self.filtered_items.push(self.items.len())
-        }
         self.items.push(item);
     }
 
     pub fn get_index_by_uuid(&self, uuid: Uuid) -> Option<usize>
     {
-        let idx = self.items_by_uuid.get(&uuid)?;
-        Some(
-            self.filtered_items
-                .binary_search(&idx)
-                .unwrap_or_else(|e| e),
-        )
+        self.items_by_uuid.get(&uuid).copied()
     }
 
     pub fn get_by_uuid(&self, uuid: Uuid) -> Option<&T>
@@ -175,74 +150,14 @@ impl<T> IndexedVec<T>
         let idx = self.items_by_uuid.get(&uuid)?;
         self.items.get_mut(*idx)
     }
-
-    pub fn len_filtered(&self) -> usize
-    {
-        self.filtered_items.len()
-    }
-
-    pub fn is_empty_filtered(&self) -> bool
-    {
-        self.filtered_items.is_empty()
-    }
-
-    pub fn get(&self, idx: usize) -> Option<&T>
-    {
-        self.filtered_items
-            .get(idx)
-            .and_then(|idx| self.items.get(*idx))
-    }
-
-    pub fn iter(&self) -> impl Iterator<Item = &T>
-    {
-        self.filtered_items.iter().map(move |idx| &self.items[*idx])
-    }
-
-    pub fn add_filter(&mut self, filter: Box<dyn ItemFilter<T>>)
-    {
-        self.filters.insert(filter.key(), filter);
-        self.refilter();
-    }
-
-    pub fn remove_filter(&mut self, filter_type: FilterType)
-    {
-        self.filters.remove(&filter_type);
-        self.refilter();
-    }
-
-    pub fn clear_filters(&mut self)
-    {
-        self.filters.clear();
-        self.refilter();
-    }
-
-    fn refilter(&mut self)
-    {
-        self.filtered_items = self
-            .items
-            .iter()
-            .enumerate()
-            .filter_map(
-                |(idx, item)| match self.filters.iter().all(|(_, f)| f.filter(item)) {
-                    true => Some(idx),
-                    false => None,
-                },
-            )
-            .collect();
-    }
-
-    fn post_deserialize(&mut self)
-    {
-        self.refilter()
-    }
 }
 
-impl<T> std::ops::Index<usize> for IndexedVec<T>
+impl<T> std::ops::Deref for IndexedVec<T>
 {
-    type Output = T;
-    fn index(&self, index: usize) -> &Self::Output
+    type Target = [T];
+    fn deref(&self) -> &Self::Target
     {
-        &self.items[self.filtered_items[index]]
+        &self.items
     }
 }
 
@@ -253,9 +168,6 @@ impl<T> Default for IndexedVec<T>
         Self {
             items: Default::default(),
             items_by_uuid: Default::default(),
-
-            filtered_items: Default::default(),
-            filters: Default::default(),
         }
     }
 }
@@ -281,7 +193,7 @@ impl std::fmt::Display for Protocol
             f,
             "{}",
             match self {
-                Protocol::Connect => "CONNEcT",
+                Protocol::Connect => "CONNECT",
                 Protocol::Tls => "TLS",
                 Protocol::Http2 => "HTTP/2",
             },
