@@ -25,7 +25,7 @@ View a previously saved session or captured traffic in the Proxide UI."
                 .decoder_options()
                 .arg(
                     Arg::with_name("file")
-                        .short("f")
+                        .index(1)
                         .value_name("file")
                         .required(true)
                         .help("Specify the file to load"),

@@ -28,25 +28,39 @@ pub fn setup_args<'a, 'b>(app: App<'a, 'b>) -> App<'a, 'b>
 pub fn initialize(matches: &ArgMatches) -> Result<Option<Box<dyn DecoderFactory>>>
 {
     // Avoid initialization if the grpc arguments arent given on the command line.
-    let files = match matches.values_of("grpc") {
-        Some(files) => files,
+    let globs = match matches.values_of("grpc") {
+        Some(globs) => globs,
         None => return Ok(None),
     };
 
     // Read all proto files.
-    let content: Vec<_> = files
-        .map(|f| {
+    let mut content = Vec::new();
+    for g in globs {
+        let files = glob::glob(g)
+            .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send>)
+            .context(ConfigurationValueError {
+                option: "grpc",
+                msg: format!("Invalid pattern '{}'", g),
+            })?;
+        for f in files {
+            let path = match f {
+                Ok(p) => p,
+                Err(e) => {
+                    eprintln!("{}", e);
+                    continue;
+                }
+            };
             let mut proto_file = String::new();
-            std::fs::File::open(f)
+            std::fs::File::open(&path)
                 .and_then(|mut file| file.read_to_string(&mut proto_file))
                 .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send>)
                 .context(ConfigurationValueError {
                     option: "grpc",
-                    msg: format!("Failed to read '{}'", f),
+                    msg: format!("Failed to read '{}'", path.to_string_lossy()),
                 })?;
-            Ok(proto_file)
-        })
-        .collect::<Result<_, _>>()?;
+            content.push(proto_file);
+        }
+    }
 
     let content_ref: Vec<_> = content.iter().map(|s| s.as_str()).collect();
 
