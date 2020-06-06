@@ -90,5 +90,5 @@ pub fn check_filter(filter: &[ProxyFilter], target: &str) -> bool
         return true;
     }
 
-    return false;
+    false
 }
