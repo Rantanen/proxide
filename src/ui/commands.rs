@@ -28,29 +28,29 @@ impl CommandState
         &mut self,
         ctx: &mut UiContext,
         e: CrosstermEvent,
-    ) -> HandleResult<B>
+    ) -> Option<HandleResult<B>>
     {
         match e {
             CrosstermEvent::Key(key) => match key.code {
-                KeyCode::Esc => return HandleResult::ExitCommand,
+                KeyCode::Esc => return Some(HandleResult::ExitCommand),
                 KeyCode::Char('c') if key.modifiers == KeyModifiers::CONTROL => {
-                    return HandleResult::ExitCommand
+                    return Some(HandleResult::ExitCommand)
                 }
-                _ if key.modifiers == KeyModifiers::CONTROL => return HandleResult::Ignore,
+                _ if key.modifiers == KeyModifiers::CONTROL => return None,
                 KeyCode::Char(c) => self.insert(c),
                 KeyCode::Enter => {
                     self.executable.execute(&self.input, ctx);
-                    return HandleResult::ExitCommand;
+                    return Some(HandleResult::ExitCommand);
                 }
                 KeyCode::Left => self.move_cursor(-1),
                 KeyCode::Right => self.move_cursor(1),
                 KeyCode::Backspace => self.remove_cursor(-1),
                 KeyCode::Delete => self.remove_cursor(0),
-                _ => return HandleResult::Ignore,
+                _ => return None,
             },
-            _ => return HandleResult::Ignore,
+            _ => return None,
         }
-        HandleResult::Update
+        Some(HandleResult::Update)
     }
 
     fn insert(&mut self, c: char)
@@ -99,6 +99,7 @@ pub trait Executable
     fn execute(&self, cmd: &str, ctx: &mut UiContext);
 }
 
+/*
 pub struct SearchCommand;
 impl Executable for SearchCommand
 {
@@ -112,6 +113,7 @@ impl Executable for SearchCommand
             }))
     }
 }
+*/
 
 pub struct ColonCommand;
 impl Executable for ColonCommand

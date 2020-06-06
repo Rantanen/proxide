@@ -107,7 +107,7 @@ impl<B: Backend> View<B> for MessageView
         f.render_widget(request_data, chunk);
     }
 
-    fn on_input(&mut self, ctx: &UiContext, e: CTEvent, size: Rect) -> HandleResult<B>
+    fn on_input(&mut self, ctx: &UiContext, e: CTEvent, size: Rect) -> Option<HandleResult<B>>
     {
         match e {
             CTEvent::Key(key) => match key.code {
@@ -117,15 +117,15 @@ impl<B: Backend> View<B> for MessageView
                 KeyCode::PageUp => self.offset = self.offset.saturating_sub(size.height - 5),
                 KeyCode::F(12) => {
                     self.export(ctx);
-                    return HandleResult::Ignore;
+                    return None;
                 }
                 KeyCode::Char('q') => match self.part {
-                    RequestPart::Request => return HandleResult::ExitView,
+                    RequestPart::Request => return Some(HandleResult::ExitView),
                     RequestPart::Response => self.part = RequestPart::Request,
                 },
                 KeyCode::Char('e') => match self.part {
                     RequestPart::Request => self.part = RequestPart::Response,
-                    RequestPart::Response => return HandleResult::ExitView,
+                    RequestPart::Response => return Some(HandleResult::ExitView),
                 },
                 KeyCode::Tab => {
                     self.part = match self.part {
@@ -133,11 +133,11 @@ impl<B: Backend> View<B> for MessageView
                         RequestPart::Response => RequestPart::Request,
                     }
                 }
-                _ => return HandleResult::Ignore,
+                _ => return None,
             },
-            _ => return HandleResult::Ignore,
+            _ => return None,
         };
-        HandleResult::Update
+        Some(HandleResult::Update)
     }
 
     fn on_change(&mut self, _ctx: &UiContext, change: &SessionChange) -> bool

@@ -13,6 +13,7 @@ use tui::{backend::CrosstermBackend, Terminal};
 use crate::decoders::Decoders;
 use crate::session::events::SessionEvent;
 
+mod chords;
 mod commands;
 mod controls;
 mod menus;
@@ -92,13 +93,15 @@ pub fn main(
     state.draw(&mut terminal).context(IoError {})?;
     loop {
         let e = ui_rx.recv().unwrap();
-        match state.handle(e) {
+        let r = match state.handle(e) {
+            None => continue,
+            Some(r) => r,
+        };
+
+        match r {
             HandleResult::PushView(..) => unreachable!("PushView is handled by the state"),
             HandleResult::ExitView => unreachable!("ExitView is handled by the state"),
-            HandleResult::OpenMenu(..) => unreachable!("PushMenu is handled by the state"),
-            HandleResult::ExitMenu => unreachable!("ExitMenu is handled by the state"),
             HandleResult::ExitCommand => unreachable!("ExitCommand is handled by the state"),
-            HandleResult::Ignore => {}
             HandleResult::Update => state.draw(&mut terminal).context(IoError {})?,
             HandleResult::Quit => break,
         }
