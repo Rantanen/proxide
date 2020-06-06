@@ -872,6 +872,7 @@ dependencies = [
  "tui",
  "uuid",
  "webpki",
+ "wildmatch",
 ]
 
 [[package]]
@@ -1470,6 +1471,12 @@ dependencies = [
  "ring",
  "untrusted",
 ]
+
+[[package]]
+name = "wildmatch"
+version = "1.0.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ee30306a7d3d4ec5f82efc97ca0650b5e26908730c5b2a6f0cd91fc90f9a53ce"
 
 [[package]]
 name = "winapi"

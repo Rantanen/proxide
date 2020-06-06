@@ -93,7 +93,8 @@ pub type Result<S, E = Error> = std::result::Result<S, E>;
 pub struct ConnectionOptions
 {
     pub listen_port: String,
-    pub target_server: String,
+    pub target_server: Option<String>,
+    pub proxy: Option<Vec<ProxyFilter>>,
     pub ca: Option<CADetails>,
 }
 
@@ -101,6 +102,12 @@ pub struct CADetails
 {
     pub certificate: String,
     pub key: String,
+}
+
+pub struct ProxyFilter
+{
+    pub host_filter: wildmatch::WildMatch,
+    pub port_filter: Option<std::num::NonZeroU16>,
 }
 
 pub struct ConnectionDetails
@@ -178,36 +185,78 @@ pub async fn connect_phase(
             .context(ClientError {
                 scenario: "demuxing stream",
             })?;
-    log::info!("{} - Top level protocol: {:?}", details.uuid, protocol);
+    log::debug!("{} - Top level protocol: {:?}", details.uuid, protocol);
 
     if protocol == demux::Protocol::Connect {
+        // Ensure Proxide is set up as a CONNECT proxy.
+        let connect_filter = match &options.proxy {
+            Some(f) => f,
+            None => {
+                return Err(EndpointError::ProxideError {
+                    reason: "CONNECT proxy requests are not allowed",
+                })
+                .context(ClientError {
+                    scenario: "setting up server connection",
+                })
+            }
+        };
+
         details.protocol_stack.push(Protocol::Connect);
         let connect_data = connect::handle_connect(client).await?;
 
-        // Perform a new demux on the inner stream. We'll do this here so we can reuse the original
-        // demux result in `handle_protocol` without having to perform another one there again.
-        let (protocol, client_stream) = demux::recognize(connect_data.client_stream)
-            .await
-            .context(IoError {})
-            .context(ClientError {
-                scenario: "demuxing stream",
-            })?;
-        log::info!("{} - Next protocol: {:?}", details.uuid, protocol);
+        // Check what to do with the CONNECT target.
+        if connect::check_filter(connect_filter, &connect_data.target_server) {
+            log::info!("{} - Intercepting CONNECT", details.uuid);
 
-        handle_protocol(
-            details,
-            protocol,
-            Streams::new(client_stream, connect_data.server_stream),
-            src_addr,
-            options,
-            ui,
-        )
-        .await
+            // The connection matches filter and should be decoded.
+
+            // Perform a new demux on the inner stream. We'll do this here so we can reuse the original
+            // demux result in `handle_protocol` without having to perform another one there again.
+            let (protocol, client_stream) = demux::recognize(connect_data.client_stream)
+                .await
+                .context(IoError {})
+                .context(ClientError {
+                    scenario: "demuxing stream",
+                })?;
+            log::debug!("{} - Next protocol: {:?}", details.uuid, protocol);
+
+            handle_protocol(
+                details,
+                protocol,
+                Streams::new(client_stream, connect_data.server_stream),
+                src_addr,
+                connect_data.target_server,
+                options,
+                ui,
+            )
+            .await
+        } else {
+            log::info!("{} - Proxying CONNECT without decoding", details.uuid);
+            // Connection does NOT match the filter. We should just pipe the
+            // streams together.
+            let (server_read, server_write) = connect_data.server_stream.into_split();
+            let (client_read, client_write) = connect_data.client_stream.into_split();
+            pipe_stream(client_read, server_write);
+            pipe_stream(server_read, client_write);
+            Ok(())
+        }
     } else {
+        let target_server = match &options.target_server {
+            Some(t) => t,
+            None => {
+                return Err(EndpointError::ProxideError {
+                    reason: "Direct connections are not allowed",
+                })
+                .context(ClientError {
+                    scenario: "setting up server connection",
+                })
+            }
+        };
+
         // Not a CONNECT request; Use the user supplied target server as the server address and
         // redirect the whole client stream there.
-        details.opaque_redirect = Some(options.target_server.to_string());
-        let server = TcpStream::connect(AsRef::<str>::as_ref(&options.target_server))
+        details.opaque_redirect = Some(target_server.to_string());
+        let server = TcpStream::connect(target_server)
             .await
             .context(IoError {})
             .context(ServerError {
@@ -219,6 +268,7 @@ pub async fn connect_phase(
             protocol,
             Streams::new(client, server),
             src_addr,
+            target_server.to_string(),
             options,
             ui,
         )
@@ -231,6 +281,7 @@ pub async fn handle_protocol<TClient, TServer>(
     protocol: demux::Protocol,
     streams: Streams<TClient, TServer>,
     src_addr: SocketAddr,
+    target: String,
     options: Arc<ConnectionOptions>,
     ui: Sender<SessionEvent>,
 ) -> Result<()>
@@ -240,11 +291,41 @@ where
 {
     let ui_clone = ui.clone();
     if protocol == demux::Protocol::TLS {
-        let streams = tls::handle(&mut details, streams, options.clone()).await?;
+        let streams = tls::handle(&mut details, streams, options.clone(), target).await?;
         http2::handle(details, src_addr, streams, ui_clone).await?;
     } else {
         http2::handle(details, src_addr, streams, ui_clone).await?;
     }
 
     Ok(())
+}
+
+fn pipe_stream<TRead, TWrite>(mut read: TRead, mut write: TWrite)
+where
+    TRead: AsyncRead + Unpin + Send + 'static,
+    TWrite: AsyncWrite + Unpin + Send + 'static,
+{
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    tokio::spawn(async move {
+        let mut b = [0_u8; 1024];
+        log::info!("Enter");
+        loop {
+            let count = match read.read(&mut b).await {
+                Err(e) => {
+                    log::error!("Error reading data: {}", e);
+                    break;
+                }
+                Ok(c) if c == 0 => break,
+                Ok(c) => c,
+            };
+            match write.write(&b[..count]).await {
+                Err(e) => {
+                    log::error!("Error writing data: {}", e);
+                    break;
+                }
+                Ok(_) => (),
+            }
+        }
+        log::info!("Exit");
+    });
 }

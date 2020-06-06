@@ -187,8 +187,41 @@ trait AppEx<'a, 'b>: Sized
                 Arg::with_name("target")
                     .short("t")
                     .value_name("host:port")
-                    .required(true)
-                    .help("Specify target host and port")
+                    .help("Enable direct connections to target server")
+                    .long_help(long!(
+                        "\
+Specify the target server to allow clients to connect directly to Proxide. Proxide will redirect
+these connections to the target server.
+
+Proxide will rewrite the HTTP Host-header and the HTTP/2 authority information with the correct
+details for the target server. If the client embeds the target details in the actual message
+payloads, these are not modified and the target server will receive the details client used to
+connect to Proxide instead."
+                    ))
+                    .takes_value(true),
+            )
+            .arg(
+                Arg::with_name("proxy")
+                    .short("p")
+                    .value_name("filter")
+                    .min_values(0)
+                    .help("Enable CONNECT proxy behaviour.")
+                    .long_help(long!(
+                        "\
+Enable using Proxide as a CONNECT proxy with an optional filter for limiting the connections which
+are decoded by Proxide.
+
+The option accepts a comma separated list of filters to limit the decoded connections. Asterisk
+('*') can be used as a wildcard when specifying the filter. If the filter is not specified, Proxide
+will decode all traffic.
+
+  > proxide monitor -l 1234 -p *.foo.com,api.bar.com:8080
+
+If neither -t or -p options are specified, Proxide will default to running as a CONNECT proxy. If
+-t option is specified, this default behaviour is skipped. Specify both -t and -p options if
+Proxide should act as a CONNECT proxy while redirecting direct connections to a target server.
+"
+                    ))
                     .takes_value(true),
             )
     }

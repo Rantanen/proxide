@@ -4,11 +4,15 @@ use std::task::Context;
 use std::task::Poll;
 use tokio::io::{split, AsyncRead, AsyncWrite, ReadHalf, WriteHalf};
 
-/// A stream that supports HTTP, HTTP2 or TLS connections.
-pub struct PrefixedStream<S>
+pub struct PrefixedRead<S>
 {
     prefix: Option<Vec<u8>>,
     read: ReadHalf<S>,
+}
+
+pub struct PrefixedStream<S>
+{
+    read: PrefixedRead<S>,
     write: WriteHalf<S>,
 }
 
@@ -20,16 +24,32 @@ where
     {
         let (read, write) = split(stream);
         Self {
-            prefix: Some(prefix),
-            read,
+            read: PrefixedRead {
+                prefix: Some(prefix),
+                read,
+            },
             write,
         }
+    }
+
+    pub fn into_split(self) -> (PrefixedRead<S>, WriteHalf<S>)
+    {
+        (self.read, self.write)
     }
 }
 
 impl<S: AsyncWrite + AsyncRead + Unpin> PrefixedStream<S> {}
 
 impl<S: AsyncRead> AsyncRead for PrefixedStream<S>
+{
+    fn poll_read(self: Pin<&mut Self>, cx: &mut Context, buf: &mut [u8]) -> Poll<Result<usize>>
+    {
+        let inner_pin = unsafe { self.map_unchecked_mut(|s| &mut s.read) };
+        inner_pin.poll_read(cx, buf)
+    }
+}
+
+impl<S: AsyncRead> AsyncRead for PrefixedRead<S>
 {
     fn poll_read(mut self: Pin<&mut Self>, cx: &mut Context, buf: &mut [u8])
         -> Poll<Result<usize>>

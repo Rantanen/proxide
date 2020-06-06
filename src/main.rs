@@ -24,7 +24,7 @@ mod search;
 mod session;
 mod ui;
 
-use connection::{run, CADetails, ConnectionOptions};
+use connection::{run, CADetails, ConnectionOptions, ProxyFilter};
 use session::Session;
 
 #[derive(Debug, Snafu)]
@@ -183,10 +183,21 @@ impl ConnectionOptions
     {
         let ca_details = Self::read_cert(args)?;
 
+        let target_server = args.value_of("target").map(ToString::to_string);
+        let mut proxy = match args.value_of("proxy") {
+            Some(p) => Some(ProxyFilter::parse(p)?),
+            None => None,
+        };
+
+        if target_server.is_none() && proxy.is_none() {
+            proxy = Some(vec![]);
+        }
+
         Ok(Arc::new(Self {
             listen_port: args.value_of("listen").unwrap().to_string(),
-            target_server: args.value_of("target").unwrap().to_string(),
             ca: ca_details,
+            target_server,
+            proxy,
         }))
     }
 
@@ -219,6 +230,44 @@ impl ConnectionOptions
             certificate: cert_data,
             key: key_data,
         }))
+    }
+}
+
+impl ProxyFilter
+{
+    fn parse(data: &str) -> Result<Vec<ProxyFilter>, Error>
+    {
+        data.split(',')
+            .map(|part| {
+                // Split into parts and process the host and port separately.
+                let mut split = part.split(':');
+                let host = split.next().ok_or_else(|| Error::ArgumentError {
+                    msg: format!("Invalid proxy filter '{}'", part),
+                })?;
+
+                // The port is optional.
+                let port = split
+                    .next()
+                    .map(|p| p.parse::<u16>())
+                    .transpose()
+                    .map_err(|_| Error::ArgumentError {
+                        msg: format!("Invalid proxy filter '{}'", part),
+                    })?
+                    .and_then(std::num::NonZeroU16::new);
+
+                // There should be no more data after the port.
+                if split.next().is_some() {
+                    return Err(Error::ArgumentError {
+                        msg: format!("Invalid proxy filter '{}'", part),
+                    });
+                }
+
+                Ok(ProxyFilter {
+                    host_filter: wildmatch::WildMatch::new(host),
+                    port_filter: port,
+                })
+            })
+            .collect()
     }
 }
 

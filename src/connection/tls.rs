@@ -16,6 +16,7 @@ pub async fn handle<TClient, TServer>(
     details: &mut ConnectionDetails,
     streams: Streams<TClient, TServer>,
     options: Arc<ConnectionOptions>,
+    target_host: String,
 ) -> Result<
     Streams<
         tokio_rustls::server::TlsStream<PrefixedStream<TClient>>,
@@ -84,7 +85,7 @@ where
     log::debug!(
         "{} - Establishing connection to {}",
         details.uuid,
-        options.target_server
+        target_host
     );
     let server_stream = server_stream_config
         .connect(outgoing_sni, server)
