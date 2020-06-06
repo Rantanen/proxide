@@ -8,6 +8,7 @@ use uuid::Uuid;
 
 use crate::session::events::*;
 use crate::session::*;
+use crate::{CADetails, ConnectionOptions};
 
 mod connect;
 mod demux;
@@ -89,27 +90,6 @@ pub enum Error
 }
 
 pub type Result<S, E = Error> = std::result::Result<S, E>;
-
-pub struct ConnectionOptions
-{
-    pub allow_remote: bool,
-    pub listen_port: String,
-    pub target_server: Option<String>,
-    pub proxy: Option<Vec<ProxyFilter>>,
-    pub ca: Option<CADetails>,
-}
-
-pub struct CADetails
-{
-    pub certificate: String,
-    pub key: String,
-}
-
-pub struct ProxyFilter
-{
-    pub host_filter: wildmatch::WildMatch,
-    pub port_filter: Option<std::num::NonZeroU16>,
-}
 
 pub struct ConnectionDetails
 {

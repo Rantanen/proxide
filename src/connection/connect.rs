@@ -3,7 +3,8 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
 
 use super::stream::PrefixedStream;
-use super::{ClientError, ConnectError, IoError, ProxyFilter, Result, ServerError};
+use super::{ClientError, ConnectError, IoError, Result, ServerError};
+use crate::ProxyFilter;
 
 pub struct ConnectData<TClient>
 {

@@ -24,7 +24,7 @@ mod search;
 mod session;
 mod ui;
 
-use connection::{run, CADetails, ConnectionOptions, ProxyFilter};
+use connection::run;
 use session::Session;
 
 #[derive(Debug, Snafu)]
@@ -59,6 +59,27 @@ pub enum Error
     {
         msg: String
     },
+}
+
+pub struct ConnectionOptions
+{
+    pub allow_remote: bool,
+    pub listen_port: String,
+    pub target_server: Option<String>,
+    pub proxy: Option<Vec<ProxyFilter>>,
+    pub ca: Option<CADetails>,
+}
+
+pub struct CADetails
+{
+    pub certificate: String,
+    pub key: String,
+}
+
+pub struct ProxyFilter
+{
+    pub host_filter: wildmatch::WildMatch,
+    pub port_filter: Option<std::num::NonZeroU16>,
 }
 
 fn main()
