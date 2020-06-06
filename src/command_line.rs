@@ -12,11 +12,15 @@ pub fn setup_app() -> App<'static, 'static>
         .version(env!("CARGO_PKG_VERSION"))
         .author("Mikko Rantanen <rantanen@jubjubnest.net>")
         .setting(AppSettings::SubcommandRequiredElseHelp)
-        .setting(AppSettings::UnifiedHelpMessage)
+        .global_setting(AppSettings::UnifiedHelpMessage)
+        .global_setting(AppSettings::VersionlessSubcommands)
         .subcommand(
             SubCommand::with_name("view")
                 .about("View traffic from a session or capture file")
-                .setting(AppSettings::UnifiedHelpMessage)
+                .long_about(long!(
+                    "\
+View a previously saved session or captured traffic in the Proxide UI."
+                ))
                 .json_options()
                 .decoder_options()
                 .arg(
@@ -31,7 +35,12 @@ pub fn setup_app() -> App<'static, 'static>
         .subcommand(
             SubCommand::with_name("monitor")
                 .about("Monitor network traffic using the Proxide UI")
-                .setting(AppSettings::UnifiedHelpMessage)
+                .long_about(long!(
+                    "\
+Monitors network traffic using the Proxide UI. The UI displays all decoded traffic in real time.
+
+The monitoring session can also be exported into a file for later analysis."
+                ))
                 .connection_options()
                 .json_options()
                 .decoder_options(),
@@ -40,7 +49,12 @@ pub fn setup_app() -> App<'static, 'static>
         .subcommand(
             SubCommand::with_name("capture")
                 .about("Capture network traffic into a file for later analysis")
-                .setting(AppSettings::UnifiedHelpMessage)
+                .long_about(long!(
+                    "\
+Capture network traffic directly into a file. The file can be later analyzed with the 'view'
+command. The traffic is written to the output file in real time. This allows capturing traffic over
+long periods with the only limit being the disk usage."
+                ))
                 .connection_options()
                 .json_options()
                 .arg(
@@ -55,12 +69,10 @@ pub fn setup_app() -> App<'static, 'static>
         .subcommand(
             SubCommand::with_name("config")
                 .about("Manage Proxide configuration")
-                .setting(AppSettings::UnifiedHelpMessage)
                 // The "config ca" subcommand.
                 .subcommand(
                     SubCommand::with_name("ca")
                         .about("Manage CA certificates required for debugging TLS traffic")
-                        .setting(AppSettings::UnifiedHelpMessage)
                         .cert_options(false)
                         .arg(
                             Arg::with_name("create")
@@ -186,6 +198,7 @@ trait AppEx<'a, 'b>: Sized
             .arg(
                 Arg::with_name("target")
                     .short("t")
+                    .long("target")
                     .value_name("host:port")
                     .help("Enable direct connections to target server")
                     .long_help(long!(
@@ -203,6 +216,7 @@ connect to Proxide instead."
             .arg(
                 Arg::with_name("proxy")
                     .short("p")
+                    .long("proxy")
                     .value_name("filter")
                     .min_values(0)
                     .help("Enable CONNECT proxy behaviour.")
@@ -212,14 +226,15 @@ Enable using Proxide as a CONNECT proxy with an optional filter for limiting the
 are decoded by Proxide.
 
 The option accepts a comma separated list of filters to limit the decoded connections. Asterisk
-('*') can be used as a wildcard when specifying the filter. If the filter is not specified, Proxide
-will decode all traffic.
+('*') can be used as a wildcard when specifying the hostname filter. If the filter is not
+specified, Proxide will decode all traffic.
 
   > proxide monitor -l 1234 -p *.foo.com,api.bar.com:8080
 
-If neither -t or -p options are specified, Proxide will default to running as a CONNECT proxy. If
--t option is specified, this default behaviour is skipped. Specify both -t and -p options if
-Proxide should act as a CONNECT proxy while redirecting direct connections to a target server.
+If neither -t or -p options are specified, Proxide will default to running as a CONNECT proxy (as
+if -p was specified with no filter). If -t option is specified, this default behaviour is skipped.
+Specify both -t and -p options if Proxide should act as a CONNECT proxy while redirecting direct
+connections to a target server.
 "
                     ))
                     .takes_value(true),
