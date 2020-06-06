@@ -299,12 +299,9 @@ where
                 Ok(c) if c == 0 => break,
                 Ok(c) => c,
             };
-            match write.write(&b[..count]).await {
-                Err(e) => {
-                    log::error!("Error writing data: {}", e);
-                    break;
-                }
-                Ok(_) => (),
+            if let Err(e) = write.write(&b[..count]).await {
+                log::error!("Error writing data: {}", e);
+                break;
             }
         }
         log::info!("Exit");
