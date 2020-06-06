@@ -198,6 +198,7 @@ impl ConnectionOptions
         }
 
         Ok(Arc::new(Self {
+            allow_remote: args.is_present("allow-remote"),
             listen_port: args.value_of("listen").unwrap().to_string(),
             ca: ca_details,
             target_server,
@@ -285,28 +286,29 @@ async fn tokio_main(
     // We'll want to listen for both IPv4 and IPv6. These days 'localhost' will first resolve to the
     // IPv6 address if that is available. If we did not bind to it, all the connections would first
     // need to timeout there before the Ipv4 would be attempted as a fallback.
-    let listener_ipv4 = TcpListener::bind(format!("0.0.0.0:{}", &options.listen_port))
-        .await
-        .ok();
-    let listener_ipv6 = TcpListener::bind(format!("[::1]:{}", &options.listen_port))
-        .await
-        .ok();
+    let addresses = match options.allow_remote {
+        true => vec!["0.0.0.0", "[::]"],
+        false => vec!["127.0.0.1", "[::1]"],
+    };
+
+    let mut sockets: Vec<_> = Vec::new();
+    for addr in addresses {
+        let addr = format!("{}:{}", addr, &options.listen_port);
+        match TcpListener::bind(&addr).await {
+            Err(_) => log::error!("Could not bind to {}", addr),
+            Ok(s) => sockets.push(s),
+        }
+    }
 
     // Ensure we bound at least one of the sockets.
-    if listener_ipv4.is_none() && listener_ipv6.is_none() {
+    if sockets.is_empty() {
         return Err(Error::RuntimeError {
             msg: "Could not bind to either IPv4 or IPv6 address".to_string(),
         });
     }
 
-    // Start the accept-tasks.
-    match listener_ipv4 {
-        None => ui::toast::show_error("Could not bind to IPv4"),
-        Some(listener) => spawn_accept(listener, options.clone(), ui_tx.clone()),
-    }
-    match listener_ipv6 {
-        None => ui::toast::show_error("Could not bind to IPv6"),
-        Some(listener) => spawn_accept(listener, options.clone(), ui_tx.clone()),
+    for s in sockets {
+        spawn_accept(s, options.clone(), ui_tx.clone())
     }
 
     // Wait for an abort event to quit the thread.

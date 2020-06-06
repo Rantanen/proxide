@@ -92,6 +92,7 @@ pub type Result<S, E = Error> = std::result::Result<S, E>;
 
 pub struct ConnectionOptions
 {
+    pub allow_remote: bool,
     pub listen_port: String,
     pub target_server: Option<String>,
     pub proxy: Option<Vec<ProxyFilter>>,

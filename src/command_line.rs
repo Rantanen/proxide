@@ -192,14 +192,20 @@ trait AppEx<'a, 'b>: Sized
                     .short("l")
                     .value_name("port")
                     .required(true)
+                    .takes_value(true)
                     .help("Specify listening port")
-                    .takes_value(true),
+                    .long_help(long!(
+                        "\
+Specify the port that Proxide will listen to. This is the port that clients must comment to, either
+directly (when using -t) or through a proxy setting (when using -p)."
+                    )),
             )
             .arg(
                 Arg::with_name("target")
                     .short("t")
                     .long("target")
                     .value_name("host:port")
+                    .takes_value(true)
                     .help("Enable direct connections to target server")
                     .long_help(long!(
                         "\
@@ -210,8 +216,22 @@ Proxide will rewrite the HTTP Host-header and the HTTP/2 authority information w
 details for the target server. If the client embeds the target details in the actual message
 payloads, these are not modified and the target server will receive the details client used to
 connect to Proxide instead."
-                    ))
-                    .takes_value(true),
+                    )),
+            )
+            .arg(
+                Arg::with_name("allow-remote")
+                    .long("allow-remote")
+                    .help("Allow remote connections")
+                    .long_help(long!(
+                        "\
+Allow Proxide to handle remote connections. Normally Proxide listens to only local connections.
+Allowing remote connections allows running Proxide on a remote machine (such as the server
+machine).
+
+WARNING: It is recommended to use the '-t' option together with '--allow-remote'. Acting as a
+CONNECT proxy ('-p') while allowing remote connections turns Proxide into an open proxy, which may
+be used to connect to other hosts in the local network."
+                    )),
             )
             .arg(
                 Arg::with_name("proxy")
