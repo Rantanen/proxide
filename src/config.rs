@@ -123,7 +123,7 @@ fn create_ca(matches: &ArgMatches, cert_file: &str, key_file: &str) -> Result<()
         .push(rcgen::DnType::OrganizationName, "UNSAFE");
     ca_params
         .distinguished_name
-        .push(rcgen::DnType::CommonName, "UNSAFE Proxide Root Certificate"); // See the comment above.
+        .push(rcgen::DnType::CommonName, CERT_COMMON_NAME); // See the comment above.
     let ca_cert = rcgen::Certificate::from_params(ca_params).unwrap();
 
     File::create(cert_file)
