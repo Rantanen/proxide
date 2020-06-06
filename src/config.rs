@@ -163,16 +163,16 @@ mod os
     use super::*;
     pub fn revoke_ca(_matches: &ArgMatches) -> Result<(), Error>
     {
-        return Err(Error::RuntimeError {
+        Err(Error::RuntimeError {
             msg: "--revoke is not supported on this platform".to_string(),
-        });
+        })
     }
 
     pub fn trust_ca(_cert_file: &str, _matches: &ArgMatches) -> Result<(), Error>
     {
-        return Err(Error::RuntimeError {
+        Err(Error::RuntimeError {
             msg: "--trust is not supported on this platform".to_string(),
-        });
+        })
     }
 }
 
