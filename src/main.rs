@@ -314,7 +314,7 @@ async fn tokio_main(
     // Wait for an abort event to quit the thread.
     //
     // Once the tokio_main exits, the main program will exit. The spawned tasks
-    // won't keep the process alive.
+    // won't keep the process alive (unless they block, which would be a bug!)
     let _ = abort_rx.await;
     log::info!("tokio_main done");
     Ok(())
