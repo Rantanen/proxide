@@ -13,7 +13,6 @@ namespace dotnet_grpc
 
         static void Main(string[] rawArgs)
         {
-            Console.WriteLine(Environment.GetEnvironmentVariable("HTTP_PROXY"));
             CommandLine.Parser.Default.ParseArguments<Arguments>(rawArgs)
                 .WithParsed(args => Run(args).Wait())
                 .WithNotParsed(OnError);

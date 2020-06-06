@@ -1,8 +1,9 @@
-using System.IO;
-using System;
-using System.Threading.Tasks;
-using System.Diagnostics;
 using Grpc.Core;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
+using System.Threading.Tasks;
+using System;
 
 using DotNet.Service;
 
@@ -23,8 +24,14 @@ namespace dotnet_grpc
                 credentials = new SslCredentials(cert);
             }
 
+            var options = new List<ChannelOption>();
+
+            // Require gRPC 1.30 to actually work
+            if (!String.IsNullOrEmpty(args.Proxy))
+                options.Add(new ChannelOption("grpc.http_proxy", args.Proxy));
+
             Console.WriteLine($"C# Test Client connecting to {args.Connect}");
-            var channel = new Channel(args.Connect, credentials);
+            var channel = new Channel(args.Connect, credentials, options);
             var client = new TestService.TestServiceClient(channel);
 
             var response = await client.HelloWorldAsync(new HelloWorldRequest {

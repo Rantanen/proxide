@@ -70,6 +70,19 @@ grep -a RequestDone $TEST_OUTPUT
 echo > $TEST_OUTPUT
 success ...OK
 
+notice "Killing Proxide set up for direct connections and starting one for CONNECT testing."
+kill $PROXIDE_PID
+sleep 0.1
+notice "Proxide PID $PROXIDE_PID killed"
+
+success "Direct connect tests OK!"
+
+pushd ../../
+cargo run -- capture -l 5555 -f $TEST_OUTPUT --ca-cert test_ca.crt --ca-key test_ca.key --json &
+PROXIDE_PID=$!
+notice "Proxide started with PID $PROXIDE_PID. If the tests fail, the process might be left behind"
+popd
+
 # Test CONNECT proxy.
 notice "Testing plain connection using Proxide as a CONNECT proxy"
 http_proxy="http://localhost:5555" dotnet run -- --connect localhost:8888 \
@@ -90,6 +103,21 @@ grep MessageDone $TEST_OUTPUT
 grep RequestDone $TEST_OUTPUT
 echo > $TEST_OUTPUT
 success ...OK
+
+# This test requires gRPC 1.30, which isn't out yet so we'll disable it for now.
+#
+# # Test CONNECT proxy with GRPC channel args
+# notice "Ensuring per-channel CONNECT proxy works"
+# dotnet run -- --connect localhost:8888 \
+#     --server-port 8888 \
+#     --proxy http://localhost:5555 \
+#     --ca-cert ../../test_ca.crt \
+#     --server-cert test_server.crt \
+#     --server-key test_server.key
+# grep MessageDone $TEST_OUTPUT
+# grep RequestDone $TEST_OUTPUT
+# echo > $TEST_OUTPUT
+# success ...OK
 
 popd
 
