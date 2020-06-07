@@ -141,6 +141,15 @@ impl<T> FilterState<T>
         }
     }
 
+    pub fn has_filter(&self, filter: &dyn ItemFilter<T>) -> bool
+    {
+        self.filters
+            .get(filter.filter_type())
+            .and_then(|g| g.get(filter.key().as_ref()))
+            .map(|_| true)
+            .unwrap_or(false)
+    }
+
     pub fn add_filter(&mut self, filter: Box<dyn ItemFilter<T>>) -> (FilterType, String)
     {
         let pair = (filter.filter_type(), filter.key().to_string());
@@ -478,7 +487,7 @@ impl<T> FilterMap<T>
                 group.enabled = true;
             }
             true => {
-                filter.enabled = true;
+                filter.enabled = false;
                 group.enabled = group.filters.values().any(|f| f.enabled)
             }
         }

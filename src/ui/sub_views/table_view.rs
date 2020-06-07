@@ -249,7 +249,7 @@ impl<T: crate::session::HasKey> TableView<T>
                         false
                     };
 
-                    let style = crate::ui::style::row_style(
+                    let style = crate::ui::style::request_row_style(
                         is_active,
                         is_filtered,
                         is_group,
@@ -264,6 +264,8 @@ impl<T: crate::session::HasKey> TableView<T>
         .highlight_symbol("> ");
         if is_active {
             table = table.highlight_style(Style::default().modifier(Modifier::BOLD));
+        } else {
+            table = table.highlight_style(Style::default());
         }
 
         f.render_stateful_widget(table, chunk, &mut self.tui_state)

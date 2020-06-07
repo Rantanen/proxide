@@ -1,13 +1,15 @@
 use crossterm::event::KeyCode;
 use tui::layout::{Constraint, Direction, Layout};
-use tui::style::{Color, Style};
 use tui::widgets::{List, ListState, Paragraph, Text};
 
 use crate::ui::prelude::*;
 
 use crate::session::EncodedRequest;
 use crate::ui::chords::{ChordResult, ChordState};
-use crate::ui::filters::{ConnectionFilter, FilterGroupState, FilterState, FilterType, PathFilter};
+use crate::ui::filters::{
+    ConnectionFilter, FilterGroupState, FilterState, FilterType, ItemFilter, PathFilter,
+};
+use crate::ui::style;
 
 pub struct FilterPane
 {
@@ -242,13 +244,29 @@ impl FilterPane
                 .connections
                 .get_by_uuid(request.request_data.connection_uuid)
             {
+                let enable_disable = match filter.has_filter(&ConnectionFilter {
+                    connection: request.request_data.connection_uuid,
+                }) {
+                    false => "Enable",
+                    true => "Disable",
+                };
+
                 keys_text.push(Text::raw(format!(
-                    "[c]: Toggle filter by connection: {}\n",
-                    conn.client_addr
+                    "[c]: {} filter by connection: {}\n",
+                    enable_disable, conn.client_addr
                 )));
             }
+
+            let enable_disable = match filter.has_filter(&PathFilter {
+                path: request.request_data.uri.path().to_string(),
+            }) {
+                false => "Enable",
+                true => "Disable",
+            };
+
             keys_text.push(Text::raw(format!(
-                "[p]: Toggle filter by path: {}\n",
+                "[p]: {} filter by path: {}\n",
+                enable_disable,
                 request.request_data.uri.path()
             )));
         }
@@ -272,10 +290,7 @@ impl FilterPane
                 state.select(Some(filter_items.len()));
             }
 
-            let mut style = Style::default();
-            if !group.enabled {
-                style = style.fg(Color::Gray)
-            }
+            let style = style::filter_row_style(is_active, group.enabled, false);
             filter_items.push(Text::styled(
                 format!("{} filters:", group.filter_type),
                 style,
@@ -287,10 +302,13 @@ impl FilterPane
                         state.select(Some(filter_items.len()));
                     }
                 }
-                let mut style = Style::default();
-                if !single_filter.enabled {
-                    style = style.fg(Color::Gray)
-                }
+                let style = style::filter_row_style(
+                    is_active,
+                    group.enabled,
+                    request
+                        .map(|req| single_filter.filter(req))
+                        .unwrap_or(false),
+                );
                 filter_items.push(Text::styled(
                     format!(" - {}", single_filter.to_string(ctx)),
                     style,
@@ -312,8 +330,7 @@ impl FilterPane
     {
         request.map(|req| {
             let connection = req.request_data.connection_uuid;
-            let key = filter.add_filter(Box::new(ConnectionFilter { connection }));
-            self.selection = Some((key.0, Some(key.1)));
+            self.add_remove_filter(filter, ConnectionFilter { connection });
             HandleResult::Update
         })
     }
@@ -325,11 +342,24 @@ impl FilterPane
     ) -> Option<HandleResult<B>>
     {
         request.map(|req| {
-            let key = filter.add_filter(Box::new(PathFilter {
-                path: req.request_data.uri.path().to_string(),
-            }));
-            self.selection = Some((key.0, Some(key.1)));
+            let path = req.request_data.uri.path().to_string();
+            self.add_remove_filter(filter, PathFilter { path });
             HandleResult::Update
         })
+    }
+
+    fn add_remove_filter<T: ItemFilter<EncodedRequest> + 'static>(
+        &mut self,
+        filter: &mut FilterState<EncodedRequest>,
+        new_filter: T,
+    )
+    {
+        match filter.has_filter(&new_filter) {
+            true => filter.remove_filter(new_filter.filter_type(), new_filter.key().as_ref()),
+            false => {
+                let key = filter.add_filter(Box::new(new_filter));
+                self.selection = Some((key.0, Some(key.1)));
+            }
+        }
     }
 }
