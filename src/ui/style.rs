@@ -22,9 +22,9 @@ pub fn request_row_style(
 pub fn filter_row_style(control_active: bool, enabled: bool, matches_request: bool) -> Style
 {
     Style::default().fg(match (control_active, enabled, matches_request) {
-        (false, true, true) => Color::Rgb(0x77, 0xee, 0x77),
         (false, false, true) => Color::Rgb(0x44, 0x88, 0x44),
-        (_, true, _) => Color::Gray,
+        (false, true, true) => Color::Rgb(0x77, 0xee, 0x77),
         (_, false, _) => Color::DarkGray,
+        (_, true, _) => Color::Gray,
     })
 }
