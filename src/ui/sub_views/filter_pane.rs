@@ -304,7 +304,7 @@ impl FilterPane
                 }
                 let style = style::filter_row_style(
                     is_active,
-                    group.enabled,
+                    single_filter.enabled,
                     request
                         .map(|req| single_filter.filter(req))
                         .unwrap_or(false),
