@@ -1,7 +1,7 @@
 use super::prelude::*;
 use crate::decoders::Decoder;
 use crossterm::event::KeyCode;
-use tui::widgets::Paragraph;
+use tui::widgets::{Paragraph, Text};
 use uuid::Uuid;
 
 use crate::session::{MessageData, RequestData, RequestPart};

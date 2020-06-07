@@ -3,8 +3,6 @@ use prelude::*;
 
 mod main_view;
 pub use main_view::MainView;
-mod details_view;
-pub use details_view::DetailsView;
 mod message_view;
 pub use message_view::MessageView;
 

@@ -1,19 +1,17 @@
 use tui::layout::{Constraint, Direction, Layout, Rect};
 
 use super::prelude::*;
-use super::{DetailsView, MessageView};
-use crate::session::{EncodedRequest, RequestPart};
+use crate::session::EncodedRequest;
 
 use crate::ui::commands;
-use crate::ui::controls::TableView;
-use crate::ui::menus::RequestFilterMenu;
+use crate::ui::sub_views::{DetailsPane, FilterPane, TableView};
 
 pub struct MainView
 {
-    details_view: DetailsView,
+    details_view: DetailsPane,
     requests_state: TableView<EncodedRequest>,
-    filter_menu: Option<RequestFilterMenu>,
-    menu_active: bool,
+    filter_pane: Option<FilterPane>,
+    filter_pane_active: bool,
 }
 
 impl Default for MainView
@@ -21,9 +19,9 @@ impl Default for MainView
     fn default() -> Self
     {
         Self {
-            details_view: DetailsView::default(),
-            filter_menu: None,
-            menu_active: false,
+            details_view: DetailsPane::default(),
+            filter_pane: None,
+            filter_pane_active: false,
             requests_state: TableView::<EncodedRequest>::new("Requests")
                 .with_group_filter(|current, maybe| {
                     current.request_data.connection_uuid == maybe.request_data.connection_uuid
@@ -70,9 +68,9 @@ impl<B: Backend> View<B> for MainView
             .split(chunk);
 
         let requests_state = &self.requests_state;
-        let selected_filter = match self.menu_active {
+        let selected_filter = match self.filter_pane_active {
             true => self
-                .filter_menu
+                .filter_pane
                 .as_mut()
                 .and_then(|fm| fm.selected_filter(requests_state.get_filter())),
             false => None,
@@ -81,18 +79,18 @@ impl<B: Backend> View<B> for MainView
         self.requests_state.draw_requests(
             &ctx.data.requests,
             selected_filter,
-            !self.menu_active,
+            !self.filter_pane_active,
             f,
             chunks[0],
         );
 
         let request = self.requests_state.selected(&ctx.data.requests);
-        if let Some(filter_menu) = &mut self.filter_menu {
+        if let Some(filter_menu) = &mut self.filter_pane {
             filter_menu.draw(
                 self.requests_state.get_filter(),
                 ctx,
                 request,
-                self.menu_active,
+                self.filter_pane_active,
                 f,
                 chunks[1],
             );
@@ -104,9 +102,9 @@ impl<B: Backend> View<B> for MainView
 
     fn on_input(&mut self, ctx: &UiContext, e: CTEvent, size: Rect) -> Option<HandleResult<B>>
     {
-        if self.filter_menu.is_some() && self.menu_active {
+        if self.filter_pane.is_some() && self.filter_pane_active {
             let filter = &mut self.requests_state.get_filter_mut(&ctx.data.requests);
-            self.filter_menu
+            self.filter_pane
                 .as_mut()
                 .unwrap()
                 .on_active_input(filter, e)
@@ -115,7 +113,7 @@ impl<B: Backend> View<B> for MainView
                 .on_active_input(&ctx.data.requests, e, size)
         }
         .or_else(|| self.do_filter_input(ctx, e))
-        .or_else(|| self.do_details_input(ctx, e, size))
+        .or_else(|| self.do_details_input(ctx, e))
         .or_else(|| self.do_self_input(ctx, e))
     }
 
@@ -155,7 +153,7 @@ impl MainView
     ) -> Option<HandleResult<B>>
     {
         // Handle whatever is on the right side first.
-        if let Some(filter_menu) = &mut self.filter_menu {
+        if let Some(filter_menu) = &mut self.filter_pane {
             // Filter menu.
             let request = self.requests_state.selected(&ctx.data.requests);
             match filter_menu.on_global_input(
@@ -165,7 +163,7 @@ impl MainView
                 e,
             )? {
                 HandleResult::ExitView => {
-                    self.filter_menu = None;
+                    self.filter_pane = None;
                     Some(HandleResult::Update)
                 }
                 other => Some(other),
@@ -179,12 +177,11 @@ impl MainView
         &mut self,
         ctx: &UiContext,
         e: CTEvent,
-        size: Rect,
     ) -> Option<HandleResult<B>>
     {
         self.requests_state
             .selected(&ctx.data.requests)
-            .and_then(|req| self.details_view.on_input(req, ctx, e, size))
+            .and_then(|req| self.details_view.on_input(req, e))
     }
 
     fn do_self_input<B: Backend>(&mut self, ctx: &UiContext, e: CTEvent)
@@ -200,17 +197,17 @@ impl MainView
                 }
                 KeyCode::Char('f') => {
                     // Toggle the filter menu.
-                    match self.filter_menu {
+                    match self.filter_pane {
                         Some(_) => {
-                            self.filter_menu = None;
-                            self.menu_active = false;
+                            self.filter_pane = None;
+                            self.filter_pane_active = false;
                         }
                         None => {
                             // We are intentionally not making the menu active immediately.
                             //
                             // This allows the user to continue navigating through the items
                             // to find the correct ones to filter by.
-                            self.filter_menu = Some(RequestFilterMenu::new())
+                            self.filter_pane = Some(FilterPane::new())
                         }
                     }
                     Some(HandleResult::Update)
@@ -220,9 +217,9 @@ impl MainView
                     None
                 }
                 KeyCode::Tab => {
-                    match self.filter_menu {
-                        Some(_) => self.menu_active = !self.menu_active,
-                        None => self.menu_active = false,
+                    match self.filter_pane {
+                        Some(_) => self.filter_pane_active = !self.filter_pane_active,
+                        None => self.filter_pane_active = false,
                     };
                     Some(HandleResult::Update)
                 }

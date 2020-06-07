@@ -196,13 +196,8 @@ impl<T> FilterState<T>
     {
         for (i, _) in items.iter().enumerate().skip(self.last_count) {
             let item = &items[i];
-            if self.filters.iter().all(|group| {
-                // For all filter types, at least one of the filters must match.
-                group
-                    .filters
-                    .iter()
-                    .any(|(_, f)| f.enabled && f.filter.filter(item))
-            }) {
+            let matches_filter = self.filters.iter().all(|group| group.filter(item));
+            if matches_filter {
                 self.filtered_items.push(i);
                 self.filtered_items_set.insert(i);
             }
@@ -249,6 +244,17 @@ impl<T> FilterGroupState<T>
             filter_type,
             enabled: true,
             filters: BTreeMap::default(),
+        }
+    }
+
+    fn filter(&self, item: &T) -> bool
+    {
+        match self.enabled {
+            false => true,
+            true => self
+                .filters
+                .values()
+                .any(|f| f.enabled && f.filter.filter(item)),
         }
     }
 }
@@ -413,8 +419,7 @@ impl<T> FilterMap<T>
 
     pub fn prev_group(&self, current: FilterType) -> Option<&FilterGroupState<T>>
     {
-        let mut iter = self.map.values().rev();
-        while let Some(cursor) = iter.next() {
+        for cursor in self.map.values().rev() {
             if current > cursor.filter_type {
                 return Some(cursor);
             }
@@ -424,20 +429,12 @@ impl<T> FilterMap<T>
 
     pub fn next_group(&self, current: FilterType) -> Option<&FilterGroupState<T>>
     {
-        let mut iter = self.map.values();
-        while let Some(cursor) = iter.next() {
+        for cursor in self.map.values() {
             if current < cursor.filter_type {
                 return Some(cursor);
             }
         }
         None
-    }
-
-    pub fn len(&self) -> usize
-    {
-        self.map
-            .iter()
-            .fold(0, |s, (_, group)| s + group.filters.len() + 1)
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &FilterGroupState<T>>
@@ -489,15 +486,13 @@ impl<T> FilterMap<T>
 
     pub fn toggle_group(&mut self, ft: FilterType)
     {
-        log::trace!("Toggling group: {}", ft);
         let group = match self.map.get_mut(&ft) {
             None => return,
             Some(g) => g,
         };
 
         group.enabled = !group.enabled;
-        log::trace!("Enabled? {:?}", group.enabled);
-        for (_, v) in &mut group.filters {
+        for v in group.filters.values_mut() {
             v.enabled = group.enabled;
         }
     }
@@ -507,8 +502,7 @@ impl<T> FilterGroupState<T>
 {
     pub fn prev_filter(&self, current: &str) -> Option<&str>
     {
-        let mut iter = self.filters.keys().rev();
-        while let Some(cursor) = iter.next() {
+        for cursor in self.filters.keys().rev() {
             if current > cursor.as_str() {
                 return Some(cursor.as_str());
             }
@@ -518,8 +512,7 @@ impl<T> FilterGroupState<T>
 
     pub fn next_filter(&self, current: &str) -> Option<&str>
     {
-        let mut iter = self.filters.keys();
-        while let Some(cursor) = iter.next() {
+        for cursor in self.filters.keys() {
             if current < cursor.as_str() {
                 return Some(cursor.as_str());
             }

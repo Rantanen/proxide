@@ -1,19 +1,18 @@
 use crossterm::event::KeyCode;
+use tui::layout::{Constraint, Direction, Layout};
 use tui::style::{Color, Style};
 use tui::widgets::{List, ListState, Paragraph, Text};
 
-use super::controls::filters::{
-    ConnectionFilter, FilterGroupState, FilterState, FilterType, PathFilter,
-};
-use super::views::prelude::*;
+use crate::ui::prelude::*;
+
 use crate::session::EncodedRequest;
 use crate::ui::chords::{ChordResult, ChordState};
-use crate::ui::toast;
+use crate::ui::filters::{ConnectionFilter, FilterGroupState, FilterState, FilterType, PathFilter};
 
-pub struct RequestFilterMenu
+pub struct FilterPane
 {
     chord: Option<ChordState>,
-    locked_selection: Option<(FilterType, Option<String>)>,
+    selection: Option<(FilterType, Option<String>)>,
 }
 
 enum Dir
@@ -22,13 +21,13 @@ enum Dir
     Next,
 }
 
-impl RequestFilterMenu
+impl FilterPane
 {
-    pub fn new() -> RequestFilterMenu
+    pub fn new() -> FilterPane
     {
         Self {
             chord: Default::default(),
-            locked_selection: None,
+            selection: None,
         }
     }
 
@@ -87,12 +86,12 @@ impl RequestFilterMenu
             match key.code {
                 KeyCode::Char('k') | KeyCode::Up => self.move_selection(filter, Dir::Previous),
                 KeyCode::Char('j') | KeyCode::Down => self.move_selection(filter, Dir::Next),
-                KeyCode::Char('x') => match &self.locked_selection {
+                KeyCode::Char('x') => match &self.selection {
                     Some((ft, Some(key))) => filter.remove_filter(*ft, key),
                     Some((ft, None)) => filter.remove_filter_group(*ft),
                     None => (),
                 },
-                KeyCode::Char('t') => match &self.locked_selection {
+                KeyCode::Char('t') => match &self.selection {
                     Some((ft, Some(key))) => filter.toggle_filter(*ft, key),
                     Some((ft, None)) => filter.toggle_filter_group(*ft),
                     None => (),
@@ -110,7 +109,7 @@ impl RequestFilterMenu
     ) -> Option<(FilterType, &str)>
     {
         self.ensure_selection(filter);
-        match &self.locked_selection {
+        match &self.selection {
             Some((ft, Some(key))) => Some((*ft, key.as_str())),
             _ => None,
         }
@@ -119,7 +118,7 @@ impl RequestFilterMenu
     fn move_selection(&mut self, filter: &mut FilterState<EncodedRequest>, dir: Dir)
     {
         let group = self.ensure_selection(filter);
-        let selection = match &self.locked_selection {
+        let selection = match &self.selection {
             Some(s) => s,
             None => return,
         };
@@ -159,7 +158,7 @@ impl RequestFilterMenu
             },
         };
 
-        self.locked_selection = Some((new_ft, new_group));
+        self.selection = Some((new_ft, new_group));
     }
 
     fn ensure_selection<'a>(
@@ -167,13 +166,13 @@ impl RequestFilterMenu
         filter: &'a FilterState<EncodedRequest>,
     ) -> Option<&'a FilterGroupState<EncodedRequest>>
     {
-        let selection = match &self.locked_selection {
+        let selection = match &self.selection {
             Some(s) => s,
             None => {
                 // If there's no previous selection, we can just ensure the first thing is selected
                 // and be done.
                 let first = filter.filters.first();
-                self.locked_selection = first.map(|group| (group.filter_type, None));
+                self.selection = first.map(|group| (group.filter_type, None));
                 return first;
             }
         };
@@ -189,12 +188,12 @@ impl RequestFilterMenu
                         // Previous group didn't exist either. Do first group instead.
                         // If first group doesn't exist, that's a valid reason to yield None.
                         let first = filter.filters.first();
-                        self.locked_selection = first.map(|first| (first.filter_type, None));
+                        self.selection = first.map(|first| (first.filter_type, None));
                         return first;
                     }
                     Some(g) => {
                         // Previous group did exist, set that as the selection.
-                        self.locked_selection = Some((g.filter_type, None));
+                        self.selection = Some((g.filter_type, None));
                         return Some(g);
                     }
                 }
@@ -208,9 +207,7 @@ impl RequestFilterMenu
                 //
                 // It's okay if the previous item won't exist as this just results in a group
                 // selection at that point.
-                self.locked_selection =
-                    Some((group.filter_type, group.prev_filter(&f).map(String::from)));
-                Some(group);
+                self.selection = Some((group.filter_type, group.prev_filter(&f).map(String::from)));
             }
         }
 
@@ -271,7 +268,7 @@ impl RequestFilterMenu
         let mut filter_items = vec![];
         let mut state = ListState::default();
         for group in filter.filters.iter() {
-            if self.locked_selection == Some((group.filter_type, None)) {
+            if self.selection == Some((group.filter_type, None)) {
                 state.select(Some(filter_items.len()));
             }
 
@@ -285,7 +282,7 @@ impl RequestFilterMenu
             ));
 
             for single_filter in group.iter() {
-                if let Some((ft, Some(filter))) = &self.locked_selection {
+                if let Some((ft, Some(filter))) = &self.selection {
                     if *ft == group.filter_type && filter.as_str() == single_filter.key() {
                         state.select(Some(filter_items.len()));
                     }
@@ -316,7 +313,7 @@ impl RequestFilterMenu
         request.map(|req| {
             let connection = req.request_data.connection_uuid;
             let key = filter.add_filter(Box::new(ConnectionFilter { connection }));
-            self.locked_selection = Some((key.0, Some(key.1)));
+            self.selection = Some((key.0, Some(key.1)));
             HandleResult::Update
         })
     }
@@ -331,7 +328,7 @@ impl RequestFilterMenu
             let key = filter.add_filter(Box::new(PathFilter {
                 path: req.request_data.uri.path().to_string(),
             }));
-            self.locked_selection = Some((key.0, Some(key.1)));
+            self.selection = Some((key.0, Some(key.1)));
             HandleResult::Update
         })
     }

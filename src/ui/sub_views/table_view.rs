@@ -1,13 +1,14 @@
 use crossterm::event::KeyModifiers;
 use std::borrow::Cow;
 use tui::backend::Backend;
-use tui::style::{Color, Modifier, Style};
+use tui::layout::Constraint;
+use tui::style::{Modifier, Style};
 use tui::widgets::{Row, Table, TableState};
 use uuid::Uuid;
 
 use super::super::prelude::*;
-use super::filters::{FilterState, FilterType};
 use crate::session::IndexedVec;
+use crate::ui::filters::{FilterState, FilterType};
 
 pub struct TableView<T>
 {

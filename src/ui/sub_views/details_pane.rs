@@ -1,26 +1,26 @@
-use super::prelude::*;
-use tui::widgets::Paragraph;
+use tui::layout::{Constraint, Direction, Layout};
+use tui::widgets::{Paragraph, Text};
 use uuid::Uuid;
 
-use super::MessageView;
+use crate::ui::prelude::*;
+
 use crate::session::{EncodedRequest, RequestPart};
+use crate::ui::views::MessageView;
 
 #[derive(Clone, Default)]
-pub struct DetailsView;
-impl DetailsView
+pub struct DetailsPane;
+impl DetailsPane
 {
     pub fn on_input<B: Backend>(
         &mut self,
         req: &EncodedRequest,
-        ctx: &UiContext,
         e: CTEvent,
-        _size: Rect,
     ) -> Option<HandleResult<B>>
     {
         if let CTEvent::Key(key) = e {
             match key.code {
-                KeyCode::Char('q') => self.create_message_view(req, ctx, RequestPart::Request),
-                KeyCode::Char('e') => self.create_message_view(req, ctx, RequestPart::Response),
+                KeyCode::Char('q') => self.create_message_view(req, RequestPart::Request),
+                KeyCode::Char('e') => self.create_message_view(req, RequestPart::Response),
                 _ => None,
             }
         } else {
@@ -116,7 +116,6 @@ impl DetailsView
     fn create_message_view<B: Backend>(
         &mut self,
         req: &EncodedRequest,
-        ctx: &UiContext,
         part: RequestPart,
     ) -> Option<HandleResult<B>>
     {

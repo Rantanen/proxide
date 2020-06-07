@@ -15,11 +15,11 @@ use crate::session::events::SessionEvent;
 
 mod chords;
 mod commands;
-mod controls;
-mod menus;
+mod filters;
 mod prelude;
 mod state;
 mod style;
+mod sub_views;
 pub mod toast;
 mod views;
 
