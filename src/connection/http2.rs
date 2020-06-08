@@ -1,5 +1,5 @@
 use bytes::Bytes;
-use futures::{join, prelude::*};
+use futures::{prelude::*, try_join};
 use h2::{
     client::{self, ResponseFuture},
     server::{self, SendResponse},
@@ -326,8 +326,7 @@ impl ProxyRequest
         });
 
         // Now handle both futures in parallel.
-        let (r1, r2) = join!(request_future, response_future);
-        let r = r1.and(r2);
+        let r = try_join!(request_future, response_future);
         ui.send(SessionEvent::RequestDone(RequestDoneEvent {
             uuid: self.uuid,
             status: match is_fatal_error(&r) {
@@ -337,7 +336,7 @@ impl ProxyRequest
             timestamp: SystemTime::now(),
         }))
         .unwrap();
-        r
+        r.map(|_| ())
     }
 }
 
@@ -350,9 +349,18 @@ async fn pipe_stream(
 ) -> Result<Option<HeaderMap>>
 {
     while let Some(data) = source.data().await {
-        let b = data.context(H2Error {}).context(ClientError {
-            scenario: "reading content",
-        })?;
+        let b = match data {
+            Ok(b) => b,
+            Err(e) => {
+                if let Some(reason) = e.reason() {
+                    target.send_reset(reason);
+                }
+
+                return Err(e).context(H2Error {}).context(ClientError {
+                    scenario: "reading content",
+                });
+            }
+        };
 
         // Send a notification to the UI.
         ui.send(SessionEvent::MessageData(MessageDataEvent {
