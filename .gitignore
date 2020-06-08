@@ -18,4 +18,5 @@ trace.log
 /test/dotnet_grpc/test_server.csr
 /test/dotnet_grpc/test_server.key
 /protos
-/session-*.txt
+/session-*.bin
+/capture-*.bin
