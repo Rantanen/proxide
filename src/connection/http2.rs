@@ -430,6 +430,7 @@ fn is_fatal_error<S>(r: &Result<S, Error>) -> bool
             Error::ServerError { source, .. } | Error::ClientError { source, .. } => match source {
                 EndpointError::H2Error { source } => match source.reason() {
                     Some(Reason::NO_ERROR) => false,
+                    Some(Reason::CANCEL) => false,
                     _ => true,
                 },
                 _ => true,
