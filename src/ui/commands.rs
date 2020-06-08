@@ -136,7 +136,7 @@ pub fn clear_session(ctx: &mut UiContext)
 
 pub fn export_session(ctx: &UiContext)
 {
-    let filename = format!("session-{}.txt", Local::now().format("%H_%M_%S"));
+    let filename = format!("session-{}.bin", Local::now().format("%Y-%m-%d_%H%M%S"));
     match ctx
         .data
         .write_to_file(&filename, session::serialization::OutputFormat::MessagePack)

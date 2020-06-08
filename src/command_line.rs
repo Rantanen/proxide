@@ -61,8 +61,7 @@ long periods with the only limit being the disk usage."
                     Arg::with_name("file")
                         .short("f")
                         .value_name("file")
-                        .required(true)
-                        .help("Specify the output file"),
+                        .help("Specify the output file. Defaults to 'capture-<timestamp>.bin'."),
                 ),
         )
         // The config subcommands.

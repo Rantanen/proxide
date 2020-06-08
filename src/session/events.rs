@@ -10,14 +10,10 @@ pub enum SessionEvent
     NewConnection(NewConnectionEvent),
     NewRequest(NewRequestEvent),
     NewResponse(NewResponseEvent),
-    ConnectionClosed
-    {
-        uuid: Uuid,
-        status: Status,
-    },
     MessageData(MessageDataEvent),
     MessageDone(MessageDoneEvent),
     RequestDone(RequestDoneEvent),
+    ConnectionDone(ConnectionDoneEvent),
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -80,6 +76,14 @@ pub struct RequestDoneEvent
     pub timestamp: SystemTime,
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+pub struct ConnectionDoneEvent
+{
+    pub uuid: Uuid,
+    pub status: Status,
+    pub timestamp: SystemTime,
+}
+
 pub enum SessionChange
 {
     NewConnection
@@ -102,6 +106,10 @@ pub enum SessionChange
     {
         request: Uuid, part: RequestPart
     },
+    Connection
+    {
+        connection: Uuid
+    },
 }
 
 impl Session
@@ -115,7 +123,7 @@ impl Session
             SessionEvent::MessageData(e) => self.on_message_data(e),
             SessionEvent::MessageDone(e) => self.on_message_done(e),
             SessionEvent::RequestDone(e) => self.on_request_done(e),
-            SessionEvent::ConnectionClosed { .. } => vec![],
+            SessionEvent::ConnectionDone(e) => self.on_connection_done(e),
         }
     }
 
@@ -223,6 +231,18 @@ impl Session
             request.request_data.end_timestamp = Some(e.timestamp.into());
             request.request_data.status = e.status;
             vec![SessionChange::Request { request: e.uuid }]
+        } else {
+            vec![]
+        }
+    }
+
+    fn on_connection_done(&mut self, e: ConnectionDoneEvent) -> Vec<SessionChange>
+    {
+        let conn = self.connections.get_mut_by_uuid(e.uuid);
+        if let Some(conn) = conn {
+            conn.end_timestamp = Some(e.timestamp.into());
+            conn.status = e.status;
+            vec![SessionChange::Connection { connection: e.uuid }]
         } else {
             vec![]
         }

@@ -43,7 +43,9 @@ pub enum SerializationError
 pub struct CaptureStatus
 {
     pub connections: usize,
+    pub active_connections: usize,
     pub requests: usize,
+    pub active_requests: usize,
     pub data: usize,
 }
 
@@ -169,8 +171,16 @@ pub fn capture_to_file<F: FnMut(&CaptureStatus) + Send + 'static>(
     while let Ok(event) = rx.recv() {
         // Handle status updates with certain events.
         match &event {
-            SessionEvent::NewConnection(_) => status.connections += 1,
-            SessionEvent::NewRequest(_) => status.requests += 1,
+            SessionEvent::NewConnection(_) => {
+                status.connections += 1;
+                status.active_connections += 1;
+            }
+            SessionEvent::NewRequest(_) => {
+                status.requests += 1;
+                status.active_requests += 1;
+            }
+            SessionEvent::ConnectionDone(_) => status.active_connections -= 1,
+            SessionEvent::RequestDone(_) => status.active_requests -= 1,
             SessionEvent::MessageData(d) => status.data += d.data.len(),
             _ => {}
         }

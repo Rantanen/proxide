@@ -1,7 +1,11 @@
 #![allow(clippy::match_bool)]
 
 use clap::ArgMatches;
-use crossterm::{cursor::MoveToPreviousLine, ExecutableCommand};
+use crossterm::{
+    cursor,
+    terminal::{Clear, ClearType},
+    ExecutableCommand,
+};
 use log::error;
 use snafu::{ResultExt, Snafu};
 use std::fs::File;
@@ -146,7 +150,12 @@ fn proxide_main() -> Result<(), Error>
             (Session::default(), sub_m)
         }
         ("capture", Some(sub_m)) => {
-            let filename = sub_m.value_of("file").unwrap();
+            let filename = sub_m.value_of("file").map(String::from).unwrap_or_else(|| {
+                format!(
+                    "capture-{}.bin",
+                    chrono::Local::now().format("%Y-%m-%d_%H%M%S")
+                )
+            });
             let format = match sub_m.is_present("json") {
                 true => session::serialization::OutputFormat::Json,
                 false => session::serialization::OutputFormat::MessagePack,
@@ -158,11 +167,28 @@ fn proxide_main() -> Result<(), Error>
             let status_cb: fn(&session::serialization::CaptureStatus) = match stdout_data {
                 true => |_| (),
                 false => |status| {
-                    let _ = stdout().execute(MoveToPreviousLine(1));
-                    println!(
-                        "Received {} requests in {} connections. Total of {} bytes of data.",
-                        status.requests, status.connections, status.data
+                    let _ = stdout().execute(cursor::Hide);
+                    let _ = stdout().execute(cursor::MoveToPreviousLine(3));
+
+                    print!(
+                        "Connections: {} ({} active)",
+                        status.connections, status.active_connections
                     );
+                    let _ = stdout().execute(Clear(ClearType::UntilNewLine));
+                    println!();
+
+                    print!(
+                        "Requests:    {} ({} active)",
+                        status.requests, status.active_requests
+                    );
+                    let _ = stdout().execute(Clear(ClearType::UntilNewLine));
+                    println!();
+
+                    print!("Total of {} bytes of data.", status.data);
+                    let _ = stdout().execute(Clear(ClearType::UntilNewLine));
+                    println!();
+
+                    let _ = stdout().execute(cursor::Show);
                 },
             };
 
@@ -170,7 +196,8 @@ fn proxide_main() -> Result<(), Error>
             let options = ConnectionOptions::resolve(&sub_m)?;
             std::thread::spawn(move || tokio_main(options, abort_rx, ui_tx));
             if !stdout_data {
-                println!("... Waiting for connections.");
+                println!("Capturing to file: {}...", filename);
+                println!("\n... Waiting for connections.\n\n");
             }
             return session::serialization::capture_to_file(
                 ui_rx, abort_tx, &filename, format, status_cb,

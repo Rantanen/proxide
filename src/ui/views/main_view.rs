@@ -121,6 +121,7 @@ impl<B: Backend> View<B> for MainView
     {
         match change {
             SessionChange::NewConnection { .. } => false,
+            SessionChange::Connection { .. } => false,
             SessionChange::NewRequest { .. } => {
                 self.requests_state
                     .auto_select(&ctx.data.requests, Some(usize::MAX));

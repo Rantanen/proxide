@@ -121,13 +121,14 @@ where
     // Once the ´while client_connection.accept()` loop ends, the connection will close (or
     // alternatively an error happened and we'll terminate it). The final status value depends
     // on whether there was an error or not.
-    ui.send(SessionEvent::ConnectionClosed {
+    ui.send(SessionEvent::ConnectionDone(ConnectionDoneEvent {
         uuid: details.uuid,
         status: match r {
             Ok(_) => Status::Succeeded,
             Err(_) => Status::Failed,
         },
-    })
+        timestamp: SystemTime::now(),
+    }))
     .unwrap();
     r
 }

@@ -144,6 +144,7 @@ impl<B: Backend> View<B> for MessageView
     {
         match change {
             SessionChange::NewConnection { .. } => false,
+            SessionChange::Connection { .. } => false,
             SessionChange::NewRequest { .. } => false,
             SessionChange::Request { .. } => false,
             SessionChange::NewMessage { request, part }
