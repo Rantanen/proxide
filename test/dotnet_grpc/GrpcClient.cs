@@ -13,16 +13,7 @@ namespace dotnet_grpc
     {
         public async static Task Run(Arguments args)
         {
-            ChannelCredentials credentials;
-            if (string.IsNullOrEmpty(args.CACertificate))
-            {
-                credentials = ChannelCredentials.Insecure;
-            }
-            else
-            {
-                var cert = File.ReadAllText(args.CACertificate);
-                credentials = new SslCredentials(cert);
-            }
+            var credentials = args.GetChannelCredentials();
 
             var options = new List<ChannelOption>();
 

@@ -15,18 +15,7 @@ namespace dotnet_grpc
 
         public GrpcServer(Arguments args)
         {
-            ServerCredentials credentials;
-            if (string.IsNullOrEmpty(args.ServerCertificate))
-            {
-                credentials = ServerCredentials.Insecure;
-            }
-            else
-            {
-                var cert = File.ReadAllText(args.ServerCertificate);
-                var key = File.ReadAllText(args.ServerPrivateKey);
-                credentials = new SslServerCredentials(
-                        new[] { new KeyCertificatePair(cert, key) });
-            }
+            var credentials = args.GetServerCredentials();
 
             server = new Server
             {

@@ -1,0 +1,35 @@
+
+syntax = "proto3";
+
+package DotNet.Performance;
+
+message Blob {
+    repeated BlobItem items = 1;
+}
+
+message BlobItem {
+    repeated BlobSubItem sub_items = 1;
+}
+
+message BlobSubItem {
+    repeated bytes data = 1;
+}
+
+message PingMessage {
+    int64 ticks = 1;
+}
+
+service PerformanceService
+{
+    rpc Ping(PingMessage) returns (PingMessage);
+    rpc DelayedPing(PingMessage) returns (PingMessage);
+
+    rpc PingStream(stream PingMessage) returns (stream PingMessage);
+    rpc PingClientStream(stream PingMessage) returns (PingMessage);
+    rpc PingServerStream(PingMessage) returns (stream PingMessage);
+
+    rpc SetBlob(Blob) returns (PingMessage);
+    rpc GetBlob(PingMessage) returns (Blob);
+    rpc GetSetBlob(stream Blob) returns (stream Blob);
+}
+
