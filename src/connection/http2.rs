@@ -1,5 +1,4 @@
 use bytes::Bytes;
-use chrono::prelude::*;
 use futures::{join, prelude::*};
 use h2::{
     client::{self, ResponseFuture},
@@ -11,6 +10,7 @@ use log::error;
 use snafu::ResultExt;
 use std::net::SocketAddr;
 use std::sync::mpsc::Sender;
+use std::time::SystemTime;
 use tokio::io::{AsyncRead, AsyncWrite};
 use uuid::Uuid;
 
@@ -71,7 +71,7 @@ where
         uuid: details.uuid,
         protocol_stack: details.protocol_stack,
         client_addr,
-        timestamp: Local::now(),
+        timestamp: SystemTime::now(),
     }))
     .unwrap();
 
@@ -186,7 +186,7 @@ impl ProxyRequest
             uri: client_head.uri.clone(),
             method: client_head.method.clone(),
             headers: client_head.headers.clone(),
-            timestamp: Local::now(),
+            timestamp: SystemTime::now(),
         }))
         .unwrap();
 
@@ -278,7 +278,7 @@ impl ProxyRequest
             ui.send(SessionEvent::NewResponse(NewResponseEvent {
                 uuid,
                 connection_uuid,
-                timestamp: Local::now(),
+                timestamp: SystemTime::now(),
                 headers: response_head.headers.clone(),
             }))
             .unwrap();
@@ -334,7 +334,7 @@ impl ProxyRequest
                 true => Status::Failed,
                 false => Status::Succeeded,
             },
-            timestamp: Local::now(),
+            timestamp: SystemTime::now(),
         }))
         .unwrap();
         r
@@ -395,7 +395,7 @@ async fn notify_message_done(
                 uuid,
                 part,
                 status: Status::Succeeded,
-                timestamp: Local::now(),
+                timestamp: SystemTime::now(),
                 trailers,
             }))
             .unwrap(),
@@ -404,7 +404,7 @@ async fn notify_message_done(
                 uuid,
                 part,
                 status: Status::Succeeded,
-                timestamp: Local::now(),
+                timestamp: SystemTime::now(),
                 trailers: None,
             }))
             .unwrap();

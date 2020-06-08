@@ -77,7 +77,7 @@ pub fn read_file<P: AsRef<Path> + ToString>(filename: &P) -> Result<Session, Ser
             }),
         },
         b"PROXIDE-CAPTURE" => match version {
-            b"v01" => read_capture_file(file),
+            b"v02" => read_capture_file(file),
             _ => Err(SerializationError::UnsupportedVersion {
                 filetype: "session",
                 version: String::from_utf8_lossy(version).to_string(),
@@ -125,7 +125,7 @@ pub fn capture_to_file<F: FnMut(&CaptureStatus)>(
         }
     });
 
-    let mut file = open_target_file(filename, format, b"PROXIDE-CAPTUREv01")?;
+    let mut file = open_target_file(filename, format, b"PROXIDE-CAPTUREv02")?;
     let mut buffer: Vec<u8> = Vec::new();
     let mut status = CaptureStatus::default();
     while let Ok(event) = rx.recv() {

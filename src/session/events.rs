@@ -1,6 +1,6 @@
-use chrono::prelude::*;
 use http::{HeaderMap, Method, Uri};
 use std::net::SocketAddr;
+use std::time::SystemTime;
 
 use super::*;
 
@@ -26,7 +26,7 @@ pub struct NewConnectionEvent
     pub uuid: Uuid,
     pub protocol_stack: Vec<Protocol>,
     pub client_addr: SocketAddr,
-    pub timestamp: DateTime<Local>,
+    pub timestamp: SystemTime,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -40,7 +40,7 @@ pub struct NewRequestEvent
     pub method: Method,
     #[serde(with = "http_serde::header_map")]
     pub headers: HeaderMap,
-    pub timestamp: DateTime<Local>,
+    pub timestamp: SystemTime,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -50,7 +50,7 @@ pub struct NewResponseEvent
     pub uuid: Uuid,
     #[serde(with = "http_serde::header_map")]
     pub headers: HeaderMap,
-    pub timestamp: DateTime<Local>,
+    pub timestamp: SystemTime,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -67,7 +67,7 @@ pub struct MessageDoneEvent
     pub uuid: Uuid,
     pub part: RequestPart,
     pub status: Status,
-    pub timestamp: DateTime<Local>,
+    pub timestamp: SystemTime,
     #[serde(with = "super::serialization::opt_header_map")]
     pub trailers: Option<HeaderMap>,
 }
@@ -77,7 +77,7 @@ pub struct RequestDoneEvent
 {
     pub uuid: Uuid,
     pub status: Status,
-    pub timestamp: DateTime<Local>,
+    pub timestamp: SystemTime,
 }
 
 pub enum SessionChange
@@ -125,7 +125,7 @@ impl Session
             uuid: e.uuid,
             protocol_stack: e.protocol_stack,
             client_addr: e.client_addr,
-            start_timestamp: e.timestamp,
+            start_timestamp: e.timestamp.into(),
             end_timestamp: None,
             status: Status::InProgress,
         };
@@ -144,12 +144,12 @@ impl Session
                     uri: e.uri,
                     method: e.method,
                     status: Status::InProgress,
-                    start_timestamp: e.timestamp,
+                    start_timestamp: e.timestamp.into(),
                     end_timestamp: None,
                 },
                 request_msg: MessageData::new(RequestPart::Request)
                     .with_headers(e.headers)
-                    .with_start_timestamp(e.timestamp),
+                    .with_start_timestamp(e.timestamp.into()),
                 response_msg: MessageData::new(RequestPart::Response),
             },
         );
@@ -170,7 +170,7 @@ impl Session
         let request = self.requests.get_mut_by_uuid(e.uuid);
         if let Some(request) = request {
             request.response_msg.headers = e.headers;
-            request.response_msg.start_timestamp = Some(e.timestamp);
+            request.response_msg.start_timestamp = Some(e.timestamp.into());
             vec![SessionChange::NewMessage {
                 request: e.uuid,
                 part: RequestPart::Response,
@@ -206,7 +206,7 @@ impl Session
                 RequestPart::Request => &mut request.request_msg,
                 RequestPart::Response => &mut request.response_msg,
             };
-            part_msg.end_timestamp = Some(e.timestamp);
+            part_msg.end_timestamp = Some(e.timestamp.into());
             vec![SessionChange::Message {
                 request: e.uuid,
                 part: e.part,
@@ -220,7 +220,7 @@ impl Session
     {
         let request = self.requests.get_mut_by_uuid(e.uuid);
         if let Some(request) = request {
-            request.request_data.end_timestamp = Some(e.timestamp);
+            request.request_data.end_timestamp = Some(e.timestamp.into());
             request.request_data.status = e.status;
             vec![SessionChange::Request { request: e.uuid }]
         } else {
