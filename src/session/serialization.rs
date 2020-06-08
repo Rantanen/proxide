@@ -1,7 +1,7 @@
 use snafu::{ResultExt, Snafu};
 use std::io::{Read, Write};
 use std::path::Path;
-use std::sync::mpsc::Receiver;
+use std::sync::mpsc::{channel, Receiver};
 use std::sync::Mutex;
 use tokio::sync::oneshot::Sender;
 
@@ -39,7 +39,7 @@ pub enum SerializationError
     },
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone, Copy)]
 pub struct CaptureStatus
 {
     pub connections: usize,
@@ -107,7 +107,7 @@ pub fn read_session_file(file: std::fs::File) -> Result<Session, SerializationEr
         .context(FormatError {})
 }
 
-pub fn capture_to_file<F: FnMut(&CaptureStatus)>(
+pub fn capture_to_file<F: FnMut(&CaptureStatus) + Send + 'static>(
     rx: Receiver<SessionEvent>,
     abort: Sender<()>,
     filename: &str,
@@ -121,6 +121,44 @@ pub fn capture_to_file<F: FnMut(&CaptureStatus)>(
         if let Ok(mut g) = abort.lock() {
             if let Some(tx) = g.take() {
                 let _ = tx.send(());
+            }
+        }
+    });
+
+    // Set up a thread that invokes 'status_callback'.
+    //
+    // This allows the status handling to proceed without pending UI updates and
+    // the UI updates will only update the "last" state to the UI without having
+    // to go through every single intermediate state.
+    enum StatusAction
+    {
+        Status(CaptureStatus),
+        Callback,
+        Quit,
+    };
+    let (status_tx, status_rx) = channel();
+    let status_thread = std::thread::spawn({
+        let status_tx = status_tx.clone();
+        move || {
+            let mut pending_callback = false;
+            let mut current_status = CaptureStatus::default();
+            while let Ok(s) = status_rx.recv() {
+                match s {
+                    StatusAction::Callback => {
+                        pending_callback = false;
+                        status_callback(&current_status);
+                    }
+                    StatusAction::Status(status) => {
+                        current_status = status;
+                        if !pending_callback {
+                            pending_callback = true;
+                            status_tx.send(StatusAction::Callback).unwrap();
+                        }
+                    }
+                    StatusAction::Quit => {
+                        break;
+                    }
+                }
             }
         }
     });
@@ -172,10 +210,14 @@ pub fn capture_to_file<F: FnMut(&CaptureStatus)>(
                         })?;
                 }
             }
-            status_callback(&status);
+            status_tx.send(StatusAction::Status(status)).unwrap();
             buffer.clear();
         }
     }
+
+    // Join the status thread.
+    status_tx.send(StatusAction::Quit).unwrap();
+    status_thread.join().unwrap();
 
     Ok(())
 }
