@@ -81,10 +81,11 @@ pub fn main(
         }
     });
 
+    let session_tx = ui_tx.clone();
     thread::spawn(move || {
         while let Ok(e) = session_rx.recv() {
             // If the send fails, the UI has stopped so we can exit the thread.
-            if ui_tx.send(UiEvent::SessionEvent(Box::new(e))).is_err() {
+            if session_tx.send(UiEvent::SessionEvent(Box::new(e))).is_err() {
                 break;
             }
         }
@@ -92,8 +93,16 @@ pub fn main(
 
     // Ensure the UI is drawn at least once even if no events come in.
     state.draw(&mut terminal).context(IoError {})?;
+    let mut redraw_pending = false;
     loop {
         let e = ui_rx.recv().unwrap();
+
+        if let UiEvent::Redraw = e {
+            redraw_pending = false;
+            state.draw(&mut terminal).context(IoError {})?;
+            continue;
+        }
+
         let r = match state.handle(e) {
             None => continue,
             Some(r) => r,
@@ -103,7 +112,12 @@ pub fn main(
             HandleResult::PushView(..) => unreachable!("PushView is handled by the state"),
             HandleResult::ExitView => unreachable!("ExitView is handled by the state"),
             HandleResult::ExitCommand => unreachable!("ExitCommand is handled by the state"),
-            HandleResult::Update => state.draw(&mut terminal).context(IoError {})?,
+            HandleResult::Update => {
+                if !redraw_pending {
+                    redraw_pending = true;
+                    ui_tx.send(UiEvent::Redraw).expect("The UI loop dropped RX");
+                }
+            }
             HandleResult::Quit => break,
         }
     }

@@ -20,6 +20,7 @@ use crate::ui::views::{self, View};
 
 pub enum UiEvent
 {
+    Redraw,
     Crossterm(CrosstermEvent),
     Toast(ToastEvent),
     SessionEvent(Box<SessionEvent>),
@@ -88,6 +89,7 @@ impl<B: Backend> ProxideUi<B>
     pub fn handle(&mut self, e: UiEvent) -> Option<HandleResult<B>>
     {
         match e {
+            UiEvent::Redraw => unreachable!("This is handled by the parent loop"),
             UiEvent::SessionEvent(e) => {
                 // Capture the index request so we know to do indexing after the session has been
                 // updated.
