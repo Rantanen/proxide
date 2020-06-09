@@ -1,5 +1,6 @@
 use crossterm::event::KeyCode;
 use tui::layout::{Constraint, Direction, Layout};
+use tui::style::StyleDiff;
 use tui::widgets::{List, ListState, Paragraph, Text};
 
 use crate::ui::prelude::*;
@@ -318,6 +319,7 @@ impl FilterPane
 
         let filter_list = List::new(filter_items.into_iter())
             .block(create_control_block("Current filters", is_active))
+            .highlight_style_diff(StyleDiff::default())
             .highlight_symbol("> ");
         f.render_stateful_widget(filter_list, sub_chunks[1], &mut state)
     }
