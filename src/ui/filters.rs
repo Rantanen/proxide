@@ -5,7 +5,7 @@ use std::rc::Rc;
 use uuid::Uuid;
 
 use crate::search::SearchIndex;
-use crate::session::EncodedRequest;
+use crate::session::{EncodedRequest, Status};
 use crate::ui::state::UiContext;
 
 pub struct FilterState<T>
@@ -282,6 +282,7 @@ pub enum FilterType
     Connection,
     Path,
     Search,
+    Status,
 }
 
 impl FilterType
@@ -292,6 +293,7 @@ impl FilterType
             FilterType::Connection => "Connection",
             FilterType::Path => "Path",
             FilterType::Search => "Text",
+            FilterType::Status => "Status",
         }
     }
 }
@@ -391,6 +393,34 @@ impl ItemFilter<EncodedRequest> for PathFilter
     fn to_string(&self, _ctx: &UiContext) -> String
     {
         self.path.clone()
+    }
+}
+
+pub struct StatusFilter
+{
+    pub status: Status,
+}
+
+impl ItemFilter<EncodedRequest> for StatusFilter
+{
+    fn filter_type(&self) -> FilterType
+    {
+        FilterType::Status
+    }
+
+    fn key(&self) -> Cow<str>
+    {
+        self.status.to_string().into()
+    }
+
+    fn filter(&self, item: &EncodedRequest) -> bool
+    {
+        item.request_data.status == self.status
+    }
+
+    fn to_string(&self, _ctx: &UiContext) -> String
+    {
+        self.status.to_string()
     }
 }
 

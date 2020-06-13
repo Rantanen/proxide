@@ -6,9 +6,11 @@ use tui::widgets::{List, ListState, Paragraph, Text};
 use crate::ui::prelude::*;
 
 use crate::session::EncodedRequest;
+use crate::session::Status;
 use crate::ui::chords::{ChordResult, ChordState};
 use crate::ui::filters::{
     ConnectionFilter, FilterGroupState, FilterState, FilterType, ItemFilter, PathFilter,
+    StatusFilter,
 };
 use crate::ui::style;
 
@@ -45,15 +47,16 @@ impl FilterPane
         if let Some(chord) = &mut self.chord {
             match chord.handle(e) {
                 ChordResult::State(s) => {
-                    match s {
-                        "ss" => (),
-                        "sf" => (),
+                    let r = match s {
+                        "ss" => self.on_state_filter(Status::Succeeded, filter),
+                        "sf" => self.on_state_filter(Status::Failed, filter),
                         other => {
                             toast::show_error(format!("Unknown chord '{}'", other));
+                            Some(HandleResult::Update)
                         }
-                    }
+                    };
                     self.chord = None;
-                    return Some(HandleResult::Update);
+                    return r;
                 }
                 ChordResult::Cancel => {
                     self.chord = None;
@@ -348,6 +351,16 @@ impl FilterPane
             self.add_remove_filter(filter, PathFilter { path });
             HandleResult::Update
         })
+    }
+
+    fn on_state_filter<B: Backend>(
+        &mut self,
+        status: Status,
+        filter: &mut FilterState<EncodedRequest>,
+    ) -> Option<HandleResult<B>>
+    {
+        self.add_remove_filter(filter, StatusFilter { status });
+        Some(HandleResult::Update)
     }
 
     fn add_remove_filter<T: ItemFilter<EncodedRequest> + 'static>(

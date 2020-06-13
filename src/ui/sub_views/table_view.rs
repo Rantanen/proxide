@@ -37,6 +37,7 @@ enum Dir
     Previous,
     Next,
 }
+
 impl<T: crate::session::HasKey> TableView<T>
 {
     pub fn new<TTitle: Into<Cow<'static, str>>>(title: TTitle) -> Self
