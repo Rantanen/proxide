@@ -7,7 +7,7 @@ use tui::buffer::Buffer;
 use tui::layout::Rect;
 use tui::style::{Color, Style};
 use tui::terminal::Frame;
-use tui::widgets::{Block, Borders, Clear, Paragraph, Text, Widget};
+use tui::widgets::{Block, Borders, Clear, Paragraph, Text, Widget, Wrap};
 use uuid::Uuid;
 
 use super::toast::ToastEvent;
@@ -232,7 +232,7 @@ impl<B: Backend> ProxideUi<B>
         Ok(())
     }
 
-    pub fn draw_views(&mut self, mut f: Frame<B>)
+    pub fn draw_views(&mut self, f: &mut Frame<B>)
     {
         let chunk = f.size();
 
@@ -249,7 +249,7 @@ impl<B: Backend> ProxideUi<B>
         }
 
         for i in idx..self.ui_stack.len() {
-            self.ui_stack[i].draw(&self.context, &mut f, view_chunk);
+            self.ui_stack[i].draw(&self.context, f, view_chunk);
         }
 
         // The bottom area is reserved for menus or help text depending on
@@ -269,14 +269,14 @@ impl<B: Backend> ProxideUi<B>
         };
 
         f.render_widget(
-            Paragraph::new([Text::raw(&help_text)].iter()).wrap(false),
+            Paragraph::new([Text::raw(&help_text)].iter()).wrap(Wrap { trim: false }),
             text_chunk,
         );
 
         // Draw toasts on top of everything.
         let mut offset = 1;
         for t in &self.toasts {
-            offset = t.draw(offset, &mut f);
+            offset = t.draw(offset, f);
         }
     }
 }
@@ -307,7 +307,7 @@ impl Toast
         f.render_widget(
             Paragraph::new([Text::raw(&self.text)].iter())
                 .block(block)
-                .wrap(false),
+                .wrap(Wrap { trim: false }),
             rect,
         );
 

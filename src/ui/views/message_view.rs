@@ -1,7 +1,7 @@
 use super::prelude::*;
 use crate::decoders::Decoder;
 use crossterm::event::KeyCode;
-use tui::widgets::{Paragraph, Text};
+use tui::widgets::{Paragraph, Text, Wrap};
 use uuid::Uuid;
 
 use crate::session::{MessageData, RequestData, RequestPart};
@@ -102,8 +102,8 @@ impl<B: Backend> View<B> for MessageView
 
         let request_data = Paragraph::new(text.iter())
             .block(block)
-            .wrap(false)
-            .scroll(self.offset);
+            .wrap(Wrap { trim: false })
+            .scroll((self.offset, 0));
         f.render_widget(request_data, chunk);
     }
 
