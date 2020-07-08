@@ -213,10 +213,7 @@ impl MainView
                     }
                     Some(HandleResult::Update)
                 }
-                KeyCode::F(12) => {
-                    commands::export_session(ctx);
-                    None
-                }
+                KeyCode::F(12) => commands::export_session(ctx),
                 KeyCode::Tab => {
                     match self.filter_pane {
                         Some(_) => self.filter_pane_active = !self.filter_pane_active,

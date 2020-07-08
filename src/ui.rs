@@ -111,7 +111,7 @@ pub fn main(
         match r {
             HandleResult::PushView(..) => unreachable!("PushView is handled by the state"),
             HandleResult::ExitView => unreachable!("ExitView is handled by the state"),
-            HandleResult::ExitCommand => unreachable!("ExitCommand is handled by the state"),
+            HandleResult::ExitCommand(..) => unreachable!("ExitCommand is handled by the state"),
             HandleResult::Update => {
                 if !redraw_pending {
                     redraw_pending = true;

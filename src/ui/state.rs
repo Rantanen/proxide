@@ -26,12 +26,12 @@ pub enum UiEvent
     SessionEvent(Box<SessionEvent>),
 }
 
-pub struct ProxideUi<B>
+pub struct ProxideUi<B: Backend>
 {
     pub context: UiContext,
     pub ui_stack: Vec<Box<dyn View<B>>>,
     pub toasts: Vec<Toast>,
-    pub input_command: Option<commands::CommandState>,
+    pub input_command: Option<commands::CommandState<B>>,
 }
 
 pub struct Toast
@@ -61,7 +61,7 @@ pub enum HandleResult<B: Backend>
     Quit,
     PushView(Box<dyn View<B>>),
     ExitView,
-    ExitCommand,
+    ExitCommand(Option<Box<HandleResult<B>>>),
 }
 
 impl<B: Backend> ProxideUi<B>
@@ -142,6 +142,25 @@ impl<B: Backend> ProxideUi<B>
         }
     }
 
+    fn handle_result(&mut self, result: HandleResult<B>) -> Option<HandleResult<B>>
+    {
+        match result {
+            r @ HandleResult::Update | r @ HandleResult::Quit => return Some(r),
+            HandleResult::PushView(v) => {
+                self.ui_stack.push(v);
+            }
+            HandleResult::ExitView => {
+                self.ui_stack.pop();
+            }
+            HandleResult::ExitCommand(cmd) => {
+                self.input_command = None;
+                return cmd.and_then(|r| self.handle_result(*r));
+            }
+        }
+
+        Some(HandleResult::Update)
+    }
+
     fn on_input(&mut self, e: CrosstermEvent, size: Rect) -> Option<HandleResult<B>>
     {
         let result = if let Some(cmd) = &mut self.input_command {
@@ -154,21 +173,7 @@ impl<B: Backend> ProxideUi<B>
         };
 
         if let Some(result) = result {
-            match result {
-                r @ HandleResult::Update | r @ HandleResult::Quit => return Some(r),
-                HandleResult::PushView(v) => {
-                    self.ui_stack.push(v);
-                    return Some(HandleResult::Update);
-                }
-                HandleResult::ExitView => {
-                    self.ui_stack.pop();
-                    return Some(HandleResult::Update);
-                }
-                HandleResult::ExitCommand => {
-                    self.input_command = None;
-                    return Some(HandleResult::Update);
-                }
-            }
+            return self.handle_result(result);
         }
 
         Some(match e {
