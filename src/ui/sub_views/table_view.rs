@@ -2,7 +2,7 @@ use crossterm::event::KeyModifiers;
 use std::borrow::Cow;
 use tui::backend::Backend;
 use tui::layout::Constraint;
-use tui::style::{Modifier, Style, StyleDiff};
+use tui::style::{Modifier, StyleDiff};
 use tui::widgets::{Row, Table, TableState};
 use uuid::Uuid;
 
@@ -262,12 +262,11 @@ impl<T: crate::session::HasKey> TableView<T>
         )
         .block(block)
         .widths(&widths)
-        .highlight_style_diff(StyleDiff::default())
         .highlight_symbol("> ");
         if is_active {
-            table = table.highlight_style(Style::default().modifier(Modifier::BOLD));
+            table = table.highlight_style_diff(StyleDiff::default().modifier(Modifier::BOLD));
         } else {
-            table = table.highlight_style(Style::default());
+            table = table.highlight_style_diff(StyleDiff::default());
         }
 
         f.render_stateful_widget(table, chunk, &mut self.tui_state)
