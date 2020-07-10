@@ -1,46 +1,42 @@
-use chrono::prelude::*;
 use crossterm::event::{Event as CrosstermEvent, KeyCode, KeyModifiers};
 use tui::backend::Backend;
 
-use crate::session;
 use crate::ui::state::HandleResult;
 use crate::ui::state::UiContext;
-use crate::ui::toast;
 
-pub struct CommandState
+mod colon_command;
+pub use colon_command::ColonCommand;
+
+pub struct CommandState<B: Backend>
 {
     pub help: String,
     pub prompt: String,
     pub input: String,
     pub text_cursor: usize,
     pub display_cursor: u16,
-    pub executable: Box<dyn Executable>,
+    pub executable: Box<dyn Executable<B>>,
 }
 
-impl CommandState
+impl<B: Backend> CommandState<B>
 {
     pub fn cursor(&self) -> u16
     {
         self.display_cursor
     }
 
-    pub fn on_input<B: Backend>(
-        &mut self,
-        ctx: &mut UiContext,
-        e: CrosstermEvent,
-    ) -> Option<HandleResult<B>>
+    pub fn on_input(&mut self, ctx: &mut UiContext, e: CrosstermEvent) -> Option<HandleResult<B>>
     {
         match e {
             CrosstermEvent::Key(key) => match key.code {
-                KeyCode::Esc => return Some(HandleResult::ExitCommand),
+                KeyCode::Esc => return Some(HandleResult::ExitCommand(None)),
                 KeyCode::Char('c') if key.modifiers == KeyModifiers::CONTROL => {
-                    return Some(HandleResult::ExitCommand)
+                    return Some(HandleResult::ExitCommand(None))
                 }
                 _ if key.modifiers == KeyModifiers::CONTROL => return None,
                 KeyCode::Char(c) => self.insert(c),
                 KeyCode::Enter => {
-                    self.executable.execute(&self.input, ctx);
-                    return Some(HandleResult::ExitCommand);
+                    let result = self.executable.execute(&self.input, ctx);
+                    return Some(HandleResult::ExitCommand(result.map(Box::new)));
                 }
                 KeyCode::Left => self.move_cursor(-1),
                 KeyCode::Right => self.move_cursor(1),
@@ -94,9 +90,9 @@ impl CommandState
     }
 }
 
-pub trait Executable
+pub trait Executable<B: Backend>
 {
-    fn execute(&self, cmd: &str, ctx: &mut UiContext);
+    fn execute(&self, cmd: &str, ctx: &mut UiContext) -> Option<HandleResult<B>>;
 }
 
 /*
@@ -115,33 +111,7 @@ impl Executable for SearchCommand
 }
 */
 
-pub struct ColonCommand;
-impl Executable for ColonCommand
+pub fn export_session<B: Backend>(ctx: &UiContext) -> Option<HandleResult<B>>
 {
-    fn execute(&self, cmd: &str, ctx: &mut UiContext)
-    {
-        match cmd {
-            "export" => export_session(ctx),
-            "clear" => clear_session(ctx),
-            _ => toast::show_error(format!("Unknown command: {}", cmd)),
-        }
-    }
-}
-
-pub fn clear_session(ctx: &mut UiContext)
-{
-    ctx.data.requests = Default::default();
-    ctx.data.connections = Default::default();
-}
-
-pub fn export_session(ctx: &UiContext)
-{
-    let filename = format!("session-{}.bin", Local::now().format("%Y-%m-%d_%H%M%S"));
-    match ctx
-        .data
-        .write_to_file(&filename, session::serialization::OutputFormat::MessagePack)
-    {
-        Ok(_) => toast::show_message(format!("Exported session to '{}'", filename)),
-        Err(e) => toast::show_error(e.to_string()),
-    }
+    colon_command::export_session(ctx, &Default::default())
 }
