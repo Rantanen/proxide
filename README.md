@@ -79,7 +79,7 @@ view`.
 ### Decoding gRPC
 
 When Proxide is used to analyze gRPC traffic, it helps to be able to decode the
-messages. Proxie requires the service and message definitions to be able to do
+messages. Proxide requires the service and message definitions to be able to do
 this.  These definitions can be given to Proxide with the `--grpc` option. The
 option works with both the `monitor` and `view` commands.
 
