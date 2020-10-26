@@ -347,7 +347,7 @@ impl ToText for protofish::decode::PackedArray
         output
     }
 
-    fn to_index<'a>(&self, _ctx: &'a Context) -> Vec<String>
+    fn to_index(&self, _ctx: &Context) -> Vec<String>
     {
         let v: Vec<_> = match self {
             Self::Double(v) => v.iter().map(ToString::to_string).collect(),
