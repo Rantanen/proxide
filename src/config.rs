@@ -29,10 +29,8 @@ pub fn run_ca(matches: &ArgMatches) -> Result<(), Error>
 
     let cert_file = matches
         .value_of("ca-certificate")
-        .unwrap_or_else(|| "proxide_ca.crt");
-    let key_file = matches
-        .value_of("ca-key")
-        .unwrap_or_else(|| "proxide_ca.key");
+        .unwrap_or("proxide_ca.crt");
+    let key_file = matches.value_of("ca-key").unwrap_or("proxide_ca.key");
 
     if matches.is_present("create") {
         create_ca(matches, cert_file, key_file)?;
