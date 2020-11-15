@@ -1,0 +1,6 @@
+use proxide::Handler;
+
+fn on_request(request)
+{
+    Handler::Forward()
+}

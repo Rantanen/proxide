@@ -29,6 +29,7 @@ mod session;
 mod ui;
 
 use connection::run;
+use connection::scripting;
 use session::Session;
 
 #[derive(Debug, Snafu)]
@@ -63,6 +64,11 @@ pub enum Error
     {
         msg: String
     },
+
+    ScriptError
+    {
+        source: scripting::Error
+    },
 }
 
 pub struct ConnectionOptions
@@ -70,6 +76,7 @@ pub struct ConnectionOptions
     pub allow_remote: bool,
     pub listen_port: String,
     pub target_server: Option<String>,
+    pub script_host: Option<scripting::ScriptHost>,
     pub proxy: Option<Vec<ProxyFilter>>,
     pub ca: Option<CADetails>,
 }
@@ -245,11 +252,18 @@ impl ConnectionOptions
             proxy = Some(vec![]);
         }
 
+        let script_host = args
+            .value_of("script")
+            .map(scripting::ScriptHost::new)
+            .transpose()
+            .context(ScriptError {})?;
+
         Ok(Arc::new(Self {
             allow_remote: args.is_present("allow-remote"),
             listen_port: args.value_of("listen").unwrap().to_string(),
             ca: ca_details,
             target_server,
+            script_host,
             proxy,
         }))
     }

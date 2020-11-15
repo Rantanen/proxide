@@ -1,0 +1,26 @@
+use std::bytes::Bytes;
+use proxide::Handler;
+
+pub fn on_request(request)
+{
+    let response = proxide::ClientResponse::ok();
+    response.set_header("content-type", "application/grpc");
+    response.set_header("grpc-accept-encoding", "identity");
+    response.set_header("accept-encoding", "identity");
+
+    response.set_trailer("grpc-status", "0");
+    response.set_trailer("grpc-message", "");
+
+    Handler::StaticResponse(
+        response,
+        Some(Bytes::from_vec([
+            b'\x00', b'\x00', b'\x00', b'\x00',
+            b'\x11', b'\n', b'\x0f', b'\n',
+            b'\x05',
+            b'H', b'e', b'l', b'l', b'o',
+            b'\x12',
+            b'\x06',
+            b'W', b'o', b'r', b'l', b'd', b'!',
+        ])),
+    )
+}

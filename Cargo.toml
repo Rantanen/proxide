@@ -41,6 +41,11 @@ base64 = "0.11"
 wildmatch = "1"
 glob = "0.3"
 shell-words = "1"
+rune = "0.7"
+runestick = "0.7"
+rune-modules = "0.7"
 
 [patch.crates-io]
 tui = { git = 'https://github.com/Rantanen/tui-rs', branch = 'style-merge' }
+rune = { git = 'https://github.com/rune-rs/rune', rev = '6692494' }
+runestick = { git = 'https://github.com/rune-rs/rune', rev = '6692494' }

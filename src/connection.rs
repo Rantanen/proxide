@@ -1,4 +1,4 @@
-use snafu::{ResultExt, Snafu};
+use snafu::ResultExt;
 use std::net::SocketAddr;
 use std::sync::mpsc::Sender;
 use std::sync::Arc;
@@ -12,84 +12,13 @@ use crate::{CADetails, ConnectionOptions};
 
 mod connect;
 mod demux;
+pub mod error;
 mod http2;
+pub mod scripting;
 mod stream;
 mod tls;
 
-#[derive(Debug, Snafu)]
-#[snafu(visibility(pub(crate)))]
-pub enum ConfigurationErrorKind
-{
-    DNSError
-    {
-        source: webpki::InvalidDNSNameError,
-    },
-    UriError
-    {
-        source: http::uri::InvalidUri,
-    },
-    UriPartsError
-    {
-        source: http::uri::InvalidUriParts,
-    },
-    NoSource {},
-}
-
-#[derive(Debug, Snafu)]
-#[snafu(visibility(pub(crate)))]
-pub enum EndpointError
-{
-    IoError
-    {
-        source: std::io::Error
-    },
-    ConnectError
-    {
-        source: httparse::Error
-    },
-    H2Error
-    {
-        source: h2::Error
-    },
-    TLSError
-    {
-        source: rustls::TLSError
-    },
-
-    #[snafu(display("{}", reason))]
-    ProxideError
-    {
-        reason: &'static str
-    },
-}
-
-#[derive(Debug, Snafu)]
-#[snafu(visibility(pub(crate)))]
-pub enum Error
-{
-    #[snafu(display("Configuration error: {}", reason))]
-    ConfigurationError
-    {
-        reason: &'static str,
-        source: ConfigurationErrorKind,
-    },
-
-    #[snafu(display("Error occurred with the server in {}: {}", scenario, source))]
-    ServerError
-    {
-        scenario: &'static str,
-        source: EndpointError,
-    },
-
-    #[snafu(display("Error occurred with the client in {}: {}", scenario, source))]
-    ClientError
-    {
-        scenario: &'static str,
-        source: EndpointError,
-    },
-}
-
-pub type Result<S, E = Error> = std::result::Result<S, E>;
+use error::*;
 
 pub struct ConnectionDetails
 {
@@ -163,7 +92,8 @@ pub async fn connect_phase(
         demux::recognize(client)
             .await
             .context(IoError {})
-            .context(ClientError {
+            .context(EndpointError {
+                endpoint: EndpointType::Client,
                 scenario: "demuxing stream",
             })?;
     log::debug!("{} - Top level protocol: {:?}", details.uuid, protocol);
@@ -173,10 +103,11 @@ pub async fn connect_phase(
         let connect_filter = match &options.proxy {
             Some(f) => f,
             None => {
-                return Err(EndpointError::ProxideError {
+                return Err(EndpointErrorKind::ProxideError {
                     reason: "CONNECT proxy requests are not allowed",
                 })
-                .context(ClientError {
+                .context(EndpointError {
+                    endpoint: EndpointType::Client,
                     scenario: "setting up server connection",
                 })
             }
@@ -196,7 +127,8 @@ pub async fn connect_phase(
             let (protocol, client_stream) = demux::recognize(connect_data.client_stream)
                 .await
                 .context(IoError {})
-                .context(ClientError {
+                .context(EndpointError {
+                    endpoint: EndpointType::Client,
                     scenario: "demuxing stream",
                 })?;
             log::debug!("{} - Next protocol: {:?}", details.uuid, protocol);
@@ -225,10 +157,11 @@ pub async fn connect_phase(
         let target_server = match &options.target_server {
             Some(t) => t,
             None => {
-                return Err(EndpointError::ProxideError {
+                return Err(EndpointErrorKind::ProxideError {
                     reason: "Direct connections are not allowed",
                 })
-                .context(ClientError {
+                .context(EndpointError {
+                    endpoint: EndpointType::Client,
                     scenario: "setting up server connection",
                 })
             }
@@ -240,7 +173,8 @@ pub async fn connect_phase(
         let server = TcpStream::connect(target_server)
             .await
             .context(IoError {})
-            .context(ServerError {
+            .context(EndpointError {
+                endpoint: EndpointType::Server,
                 scenario: "connecting",
             })?;
 
@@ -273,9 +207,9 @@ where
     let ui_clone = ui.clone();
     if protocol == demux::Protocol::TLS {
         let streams = tls::handle(&mut details, streams, options.clone(), target).await?;
-        http2::handle(details, src_addr, streams, ui_clone).await?;
+        http2::handle(details, options, src_addr, streams, ui_clone).await?;
     } else {
-        http2::handle(details, src_addr, streams, ui_clone).await?;
+        http2::handle(details, options, src_addr, streams, ui_clone).await?;
     }
 
     Ok(())

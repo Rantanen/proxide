@@ -258,6 +258,20 @@ connections to a target server.
                     ))
                     .takes_value(true),
             )
+            .arg(
+                Arg::with_name("script")
+                    .long("script")
+                    .value_name("script")
+                    .multiple(true)
+                    .takes_value(true)
+                    .help("Register the script for request/response handling")
+                    .long_help(long!(
+                        "\
+Use the provided scripts for handling requests and responses. The scripts are able to alter
+requests and responses before they are relayed beyond Proxide.
+"
+                    )),
+            )
     }
 
     fn cert_options(self, connection: bool) -> App<'a, 'b>

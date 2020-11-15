@@ -2,8 +2,8 @@ use snafu::ResultExt;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
 
+use super::error::*;
 use super::stream::PrefixedStream;
-use super::{ClientError, ConnectError, IoError, Result, ServerError};
 use crate::ProxyFilter;
 
 pub struct ConnectData<TClient>
@@ -24,7 +24,8 @@ pub async fn handle_connect<T: AsyncRead + AsyncWrite + Unpin>(
             .read(&mut chunk)
             .await
             .context(IoError {})
-            .context(ClientError {
+            .context(EndpointError {
+                endpoint: EndpointType::Client,
                 scenario: "reading CONNECT",
             })?;
         buffer.extend(chunk[..count].iter().copied());
@@ -34,7 +35,8 @@ pub async fn handle_connect<T: AsyncRead + AsyncWrite + Unpin>(
         let res = req
             .parse(&buffer)
             .context(ConnectError {})
-            .context(ClientError {
+            .context(EndpointError {
+                endpoint: EndpointType::Client,
                 scenario: "parsing CONNECT request",
             })?;
         if let httparse::Status::Complete(count) = res {
@@ -46,14 +48,16 @@ pub async fn handle_connect<T: AsyncRead + AsyncWrite + Unpin>(
     let server = TcpStream::connect(host)
         .await
         .context(IoError {})
-        .context(ServerError {
+        .context(EndpointError {
+            endpoint: EndpointType::Server,
             scenario: "connecting",
         })?;
     client
         .write(b"HTTP/1.1 200 OK\r\n\r\n")
         .await
         .context(IoError {})
-        .context(ServerError {
+        .context(EndpointError {
+            endpoint: EndpointType::Server,
             scenario: "responding to CONNECT",
         })?;
 

@@ -91,7 +91,8 @@ where
         .connect(outgoing_sni, server)
         .await
         .context(IoError {})
-        .context(ServerError {
+        .context(EndpointError {
+            endpoint: EndpointType::Server,
             scenario: "connecting TLS",
         })?;
 
@@ -124,7 +125,8 @@ where
         .accept(PrefixedStream::new(client_data, client))
         .await
         .context(IoError {})
-        .context(ClientError {
+        .context(EndpointError {
+            endpoint: EndpointType::Client,
             scenario: "connecting TLS",
         })?;
 
@@ -206,13 +208,15 @@ where
             .read(&mut buffer)
             .await
             .context(IoError {})
-            .context(ClientError {
+            .context(EndpointError {
+                endpoint: EndpointType::Client,
                 scenario: "reading ClientHello",
             })?;
         if read == 0 {
             return Err(std::io::ErrorKind::ConnectionReset.into())
                 .context(IoError {})
-                .context(ClientError {
+                .context(EndpointError {
+                    endpoint: EndpointType::Client,
                     scenario: "reading ClientHello",
                 });
         }
@@ -223,7 +227,8 @@ where
         hello_session
             .read_tls(&mut packet)
             .context(IoError {})
-            .context(ClientError {
+            .context(EndpointError {
+                endpoint: EndpointType::Client,
                 scenario: "parsing ClientHello",
             })?;
 
@@ -238,7 +243,8 @@ where
         // No ClientHello yet. Handle the result as normal.
         process_result
             .context(super::TLSError {})
-            .context(ClientError {
+            .context(EndpointError {
+                endpoint: EndpointType::Client,
                 scenario: "parsing ClientHello",
             })?;
     };
@@ -246,10 +252,11 @@ where
     let sni = match sni {
         Some(sni) => sni,
         None => {
-            return Err(EndpointError::ProxideError {
+            return Err(EndpointErrorKind::ProxideError {
                 reason: "Client is required to support SNI",
             })
-            .context(ClientError {
+            .context(EndpointError {
+                endpoint: EndpointType::Client,
                 scenario: "resolving ClientHello",
             })
         }
