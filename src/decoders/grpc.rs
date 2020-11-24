@@ -1,5 +1,6 @@
 use clap::{App, Arg, ArgMatches};
-use protofish::{context::MessageRef, Context, MessageValue};
+use protofish::context::{Context, MessageRef};
+use protofish::decode::MessageValue;
 use snafu::ResultExt;
 use std::io::Read;
 use std::rc::Rc;
@@ -10,7 +11,7 @@ use crate::session::{MessageData, RequestData, RequestPart};
 
 pub struct GrpcDecoderFactory
 {
-    ctx: Rc<protofish::Context>,
+    ctx: Rc<Context>,
 }
 
 pub fn setup_args<'a, 'b>(app: App<'a, 'b>) -> App<'a, 'b>
@@ -206,7 +207,7 @@ impl ToText for protofish::decode::MessageValue
         indent += 1;
         for f in &self.fields {
             v.push(Text::raw("  ".repeat(indent)));
-            v.push(match msg.fields.get(&f.number) {
+            v.push(match msg.get_field(f.number) {
                 Some(f) => Text::raw(&f.name),
                 None => Text::raw(format!("[#{}]", f.number)),
             });
@@ -224,8 +225,7 @@ impl ToText for protofish::decode::MessageValue
         let msg = ctx.resolve_message(self.msg_ref);
         std::iter::once(msg.name.clone())
             .chain(self.fields.iter().flat_map(|field| {
-                msg.fields
-                    .get(&field.number)
+                msg.get_field(field.number)
                     .map(|f| f.name.clone())
                     .into_iter()
                     .chain(field.value.to_index(ctx))
@@ -241,7 +241,7 @@ impl ToText for protofish::decode::EnumValue
         // Panic here should indicate that msg_ref is for a different context.
         let e = ctx.resolve_enum(self.enum_ref);
 
-        match e.field_by_value(self.value) {
+        match e.get_field_by_value(self.value) {
             Some(field) => vec![Text::raw(&field.name)],
             None => vec![Text::raw(self.value.to_string())],
         }
@@ -251,7 +251,7 @@ impl ToText for protofish::decode::EnumValue
     {
         let e = ctx.resolve_enum(self.enum_ref);
 
-        match e.field_by_value(self.value) {
+        match e.get_field_by_value(self.value) {
             Some(field) => vec![field.name.to_string()],
             None => vec![],
         }

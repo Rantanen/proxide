@@ -973,9 +973,7 @@ dependencies = [
 
 [[package]]
 name = "protofish"
-version = "0.2.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "132df0a88045f9649900b1c0aad8b170dd7ec2820d4631d2aa779a5b09e3f737"
+version = "0.3.0"
 dependencies = [
  "bytes",
  "pest",
