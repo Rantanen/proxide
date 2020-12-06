@@ -218,6 +218,22 @@ connect to Proxide instead."
                     )),
             )
             .arg(
+                Arg::with_name("target-tls")
+                    .long("target-tls")
+                    .value_name("alpn")
+                    .takes_value(true)
+                    .help("Connect to the target server using TLS")
+                    .long_help(long!(
+                        "\
+Use TLS when connecting to the target server. Proxide will automatically wrap the target connection
+in a TLS channel. If the client then connects to Proxide using TLS, this will result in a double
+TLS tunnel to the target server. The main use for this argument is to test clients which do not
+support TLS against servers that require TLS.
+
+Specify the ALPN to use as the value for the --target-tls parameter."
+                    )),
+            )
+            .arg(
                 Arg::with_name("allow-remote")
                     .long("allow-remote")
                     .help("Allow remote connections")

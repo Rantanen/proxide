@@ -164,7 +164,7 @@ impl ResolvesServerCert for ClientHelloCapture
     }
 }
 
-struct NoVerify;
+pub struct NoVerify;
 impl ServerCertVerifier for NoVerify
 {
     fn verify_server_cert(

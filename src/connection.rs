@@ -244,16 +244,57 @@ pub async fn connect_phase(
                 scenario: "connecting",
             })?;
 
-        handle_protocol(
-            details,
-            protocol,
-            Streams::new(client, server),
-            src_addr,
-            target_server.to_string(),
-            options,
-            ui,
-        )
-        .await
+        if let Some(alpn) = &options.target_tls {
+            let mut server_stream_config = rustls::ClientConfig::new();
+            rustls::DangerousClientConfig {
+                cfg: &mut server_stream_config,
+            }
+            .set_certificate_verifier(Arc::new(tls::NoVerify));
+
+            let alpn: Vec<Vec<u8>> = alpn.lines().map(|l| l.bytes().collect()).collect();
+            server_stream_config.set_protocols(&alpn);
+
+            let sni = target_server
+                .split(':')
+                .next()
+                .expect("Any string has at least one (empty) segment");
+            let sni = webpki::DNSNameRef::try_from_ascii_str(sni)
+                .context(DNSError {})
+                .context(ConfigurationError {
+                    reason: "Invalid target server",
+                })?;
+
+            let server_connector = tokio_rustls::TlsConnector::from(Arc::new(server_stream_config));
+            let tls_server = server_connector
+                .connect(sni, server)
+                .await
+                .context(IoError {})
+                .context(ServerError {
+                    scenario: "connecting TLS",
+                })?;
+
+            handle_protocol(
+                details,
+                protocol,
+                Streams::new(client, tls_server),
+                src_addr,
+                target_server.to_string(),
+                options,
+                ui,
+            )
+            .await
+        } else {
+            handle_protocol(
+                details,
+                protocol,
+                Streams::new(client, server),
+                src_addr,
+                target_server.to_string(),
+                options,
+                ui,
+            )
+            .await
+        }
     }
 }
 

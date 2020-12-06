@@ -70,6 +70,7 @@ pub struct ConnectionOptions
     pub allow_remote: bool,
     pub listen_port: String,
     pub target_server: Option<String>,
+    pub target_tls: Option<String>,
     pub proxy: Option<Vec<ProxyFilter>>,
     pub ca: Option<CADetails>,
 }
@@ -236,6 +237,7 @@ impl ConnectionOptions
         let ca_details = Self::read_cert(args)?;
 
         let target_server = args.value_of("target").map(ToString::to_string);
+        let target_tls = args.value_of("target-tls").map(ToString::to_string);
         let mut proxy = match args.value_of("proxy") {
             Some(p) => Some(ProxyFilter::parse(p)?),
             None => None,
@@ -250,6 +252,7 @@ impl ConnectionOptions
             listen_port: args.value_of("listen").unwrap().to_string(),
             ca: ca_details,
             target_server,
+            target_tls,
             proxy,
         }))
     }
