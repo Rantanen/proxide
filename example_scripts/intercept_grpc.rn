@@ -1,0 +1,36 @@
+use std::bytes::Bytes;
+use std::future;
+
+use proxide::Handler;
+
+pub fn on_request(request)
+{
+    Handler::Intercept(handle_request)
+}
+
+async fn handle_request(client_incoming, client_send_response, server_outgoing, server_future)
+{
+    let stream = proxide::grpc::TransformStream::new()
+    let client_future = async {
+        while let Some(data) = client_incoming.data().await {
+            server_outgoing.send_data(data?, client_incoming.is_end_stream())
+        }
+
+        if let Some(trailers) = client_incoming.trailers().await {
+            server_outgoing.send_trailers(trailers);
+        }
+    };
+
+    let server_future = async {
+        let (response, server_incoming) = server_future.get().await?;
+
+        let client_outgoing = client_send_response.send_response(
+            response, server_incoming.is_end_stream())?;
+        while let Some(data) = server_incoming.data().await {
+            client_outgoing.send_data(data?, server_incoming.is_end_stream())
+        }
+        client_outgoing.send_trailers(server_incoming.trailers().await?);
+    };
+
+    future::join([client_future, server_future]).await;
+}

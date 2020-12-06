@@ -1,5 +1,6 @@
 use snafu::Snafu;
 
+pub mod grpc;
 mod handlers;
 pub mod host;
 pub mod http2;

@@ -1,17 +1,22 @@
 use clap::{App, Arg, ArgMatches};
+use lazy_static::lazy_static;
 use protofish::context::{Context, MessageRef};
 use protofish::decode::MessageValue;
 use snafu::ResultExt;
 use std::io::Read;
-use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 use tui::widgets::Text;
 
 use super::{ConfigurationError, ConfigurationValueError, Decoder, DecoderFactory, Result};
 use crate::session::{MessageData, RequestData, RequestPart};
 
+lazy_static! {
+    pub static ref CONTEXT: Mutex<Option<Arc<Context>>> = Mutex::new(None);
+}
+
 pub struct GrpcDecoderFactory
 {
-    ctx: Rc<Context>,
+    ctx: Arc<Context>,
 }
 
 pub fn setup_args<'a, 'b>(app: App<'a, 'b>) -> App<'a, 'b>
@@ -68,10 +73,10 @@ pub fn initialize(matches: &ArgMatches) -> Result<Option<Box<dyn DecoderFactory>
     let context = Context::parse(&content_ref)
         .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send>)
         .context(ConfigurationError { option: "grpc" })?;
+    let context = Arc::new(context);
+    *CONTEXT.lock().unwrap() = Some(context.clone());
 
-    Ok(Some(Box::new(GrpcDecoderFactory {
-        ctx: Rc::new(context),
-    })))
+    Ok(Some(Box::new(GrpcDecoderFactory { ctx: context })))
 }
 
 impl DecoderFactory for GrpcDecoderFactory
@@ -108,12 +113,12 @@ impl DecoderFactory for GrpcDecoderFactory
 pub struct GrpcDecoder
 {
     msg_ref: MessageRef,
-    ctx: Rc<Context>,
+    ctx: Arc<Context>,
 }
 
 impl GrpcDecoder
 {
-    pub fn new(msg_ref: MessageRef, rc: Rc<Context>) -> Self
+    pub fn new(msg_ref: MessageRef, rc: Arc<Context>) -> Self
     {
         Self { msg_ref, ctx: rc }
     }
@@ -138,7 +143,7 @@ impl GrpcDecoder
             }
             cursor += 5;
 
-            values.push(self.msg_ref.decode(&b[cursor..cursor + len], &self.ctx));
+            values.push(self.ctx.decode(self.msg_ref, &b[cursor..cursor + len]));
             cursor += len;
         }
 
@@ -284,7 +289,7 @@ impl ToText for protofish::decode::Value
             Self::Message(v) => return v.to_text(ctx, indent),
 
             Self::Unknown(unk) => Text::raw(format!("!! {:?}", unk)),
-            Self::Incomplete(bytes) => Text::raw(format!("Incomplete({:X})", bytes)),
+            Self::Incomplete(vt, bytes) => Text::raw(format!("Incomplete({}, {:X})", vt, bytes)),
         }]
     }
 
@@ -312,7 +317,7 @@ impl ToText for protofish::decode::Value
             Self::Message(v) => return v.to_index(ctx),
 
             Self::Unknown(unk) => format!("!! {:?}", unk),
-            Self::Incomplete(bytes) => format!("Incomplete({:X})", bytes),
+            Self::Incomplete(vt, bytes) => format!("Incomplete({}, {:X})", vt, bytes),
         }]
     }
 }

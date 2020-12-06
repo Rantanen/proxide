@@ -12,7 +12,7 @@ readme = "README.md"
 exclude = [ "/test" ]
 
 [dependencies]
-h2 = "0.2"
+h2 = { version = "0.2", features = [ "stream" ] }
 http = "0.2"
 bytes = { version = "0.5", features = [ "serde" ] }
 log = "0.4"
@@ -26,6 +26,8 @@ uuid = { version = "0.8", features = [ "v4", "serde" ] }
 chrono = { version = "0.4", features = ["serde"] }
 clap = "2"
 protofish = { version = "0.3" }
+Metamorfish = { version = "0.1" }
+automafish = { version = "0.1" }
 serde = { version = "1", features = ["derive"] }
 http-serde = "1"
 rmp-serde = "0.14"
@@ -50,3 +52,5 @@ tui = { git = 'https://github.com/Rantanen/tui-rs', branch = 'style-merge' }
 rune = { git = 'https://github.com/rune-rs/rune', rev = '6692494' }
 runestick = { git = 'https://github.com/rune-rs/rune', rev = '6692494' }
 protofish = { path = '../protofish' }
+Metamorfish = { path = '../metamorfish' }
+automafish = { path = '../automafish' }
