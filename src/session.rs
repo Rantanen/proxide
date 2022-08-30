@@ -84,7 +84,7 @@ pub struct MessageData
     pub part: RequestPart,
 }
 
-#[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Serialize, Deserialize)]
 pub enum Status
 {
     InProgress,
@@ -92,7 +92,7 @@ pub enum Status
     Failed,
 }
 
-#[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Serialize, Deserialize)]
 pub enum RequestPart
 {
     Request,

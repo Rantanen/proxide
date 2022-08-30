@@ -108,10 +108,10 @@ impl<T: crate::session::HasKey> TableView<T>
         // Get the current selection.
         let mut idx = match self.tui_state.selected() {
             None => {
-                let total_items = self.filter.len_filtered(&content);
+                let total_items = self.filter.len_filtered(content);
                 return self.user_select(content, Some(total_items - 1));
             }
-            Some(idx) => idx.min(self.filter.len_filtered(&content) - 1),
+            Some(idx) => idx.min(self.filter.len_filtered(content) - 1),
         };
         let (current_item, _) = self.filter.get(idx, content).unwrap();
 
@@ -123,7 +123,7 @@ impl<T: crate::session::HasKey> TableView<T>
                     other => other.saturating_sub(1),
                 },
                 Dir::Next => match idx + 1 {
-                    c if c >= self.filter.len_filtered(&content) => {
+                    c if c >= self.filter.len_filtered(content) => {
                         return;
                     }
                     c => c,
@@ -143,16 +143,16 @@ impl<T: crate::session::HasKey> TableView<T>
         match idx {
             None => {
                 self.user_selected = None;
-                if self.filter.is_empty_filtered(&content) {
+                if self.filter.is_empty_filtered(content) {
                     self.tui_state.select(None);
                 } else {
                     self.tui_state
-                        .select(Some(self.filter.len_filtered(&content) - 1));
+                        .select(Some(self.filter.len_filtered(content) - 1));
                 }
             }
             Some(mut idx) => {
-                if idx >= self.filter.len_filtered(&content) {
-                    idx = self.filter.len_filtered(&content) - 1;
+                if idx >= self.filter.len_filtered(content) {
+                    idx = self.filter.len_filtered(content) - 1;
                 }
                 self.user_selected = Some(idx);
                 self.tui_state.select(self.user_selected);
@@ -169,11 +169,11 @@ impl<T: crate::session::HasKey> TableView<T>
         }
 
         let selection = match idx {
-            Some(idx) if idx >= self.filter.len_filtered(&content) => {
-                Some(self.filter.len_filtered(&content) - 1)
+            Some(idx) if idx >= self.filter.len_filtered(content) => {
+                Some(self.filter.len_filtered(content) - 1)
             }
-            None if self.filter.is_empty_filtered(&content) => None,
-            None => Some(self.filter.len_filtered(&content) - 1),
+            None if self.filter.is_empty_filtered(content) => None,
+            None => Some(self.filter.len_filtered(content) - 1),
             some => some,
         };
 
@@ -240,7 +240,7 @@ impl<T: crate::session::HasKey> TableView<T>
         let widths = columns.iter().map(|c| c.constraint).collect::<Vec<_>>();
         let mut table = Table::new(
             columns.iter().map(|c| c.title),
-            self.filter.iter(&content, highlight_filter).map(
+            self.filter.iter(content, highlight_filter).map(
                 |(item, is_filtered, selected_filter)| {
                     let closure = move |c: &Column<T>| (c.map)(item);
 

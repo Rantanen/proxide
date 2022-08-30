@@ -3,12 +3,12 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
 
 use super::stream::PrefixedStream;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum Protocol
 {
     Http2,
     Connect,
-    TLS,
+    Tls,
 }
 
 pub async fn recognize(
@@ -25,7 +25,7 @@ pub async fn recognize(
         // Handshake type: ClientHello (1)
         // Handshake length: _, _, _
         // Protocol version: 1.x (3, _)
-        &[22, 3, _, _, _, 1, _, _, _, 3] => Protocol::TLS,
+        &[22, 3, _, _, _, 1, _, _, _, 3] => Protocol::Tls,
         b"PRI * HTTP" => Protocol::Http2,
         &[b'C', b'O', b'N', b'N', b'E', b'C', b'T', b' ', _, _] => Protocol::Connect,
         _ => return Err(std::io::ErrorKind::InvalidData.into()),

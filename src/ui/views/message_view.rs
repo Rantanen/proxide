@@ -24,7 +24,7 @@ impl MessageView
         };
 
         let text: String = self
-            .get_decoder(&ctx, request, message)
+            .get_decoder(ctx, request, message)
             .decode(message)
             .into_iter()
             .map(|text| match text {
@@ -97,7 +97,7 @@ impl<B: Backend> View<B> for MessageView
             Some(t) => t,
             None => return,
         };
-        let decoder = self.get_decoder(&ctx, request, message);
+        let decoder = self.get_decoder(ctx, request, message);
         let text = decoder.decode(message);
 
         let request_data = Paragraph::new(text.iter())

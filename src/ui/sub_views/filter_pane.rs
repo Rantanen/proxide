@@ -139,7 +139,7 @@ impl FilterPane
                     //
                     // Then if we're moving to the next group, we'll need to make sure that group
                     // exists. If it doesn't, we'll just stay still.
-                    match group.next_filter(&s) {
+                    match group.next_filter(s) {
                         Some(f) => (selection.0, Some(f.to_string())),
                         None => match filter.filters.next_group(selection.0) {
                             Some(g) => (g.filter_type, None),
@@ -208,12 +208,12 @@ impl FilterPane
 
         // Ensure the filter within the group is valid.
         if let Some(f) = &selection.1 {
-            if group.get(&f).is_none() {
+            if group.get(f).is_none() {
                 // Filter not found. Select the previous item that exits.
                 //
                 // It's okay if the previous item won't exist as this just results in a group
                 // selection at that point.
-                self.selection = Some((group.filter_type, group.prev_filter(&f).map(String::from)));
+                self.selection = Some((group.filter_type, group.prev_filter(f).map(String::from)));
             }
         }
 

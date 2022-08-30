@@ -101,19 +101,6 @@ impl<B: Backend> ProxideUi<B>
                     _ => None,
                 };
 
-                let results: Vec<_> = self
-                    .context
-                    .data
-                    .handle(*e)
-                    .into_iter()
-                    .map(|change| {
-                        self.ui_stack
-                            .last_mut()
-                            .unwrap()
-                            .on_change(&self.context, &change)
-                    })
-                    .collect();
-
                 if let Some(ixreq) = index_request {
                     self.context.runtime.search_index.borrow_mut().index(
                         &self.context.data,
@@ -122,7 +109,14 @@ impl<B: Backend> ProxideUi<B>
                     );
                 }
 
-                match results.into_iter().any(|b| b) {
+                let mut results_iter = self.context.data.handle(*e).into_iter().map(|change| {
+                    self.ui_stack
+                        .last_mut()
+                        .unwrap()
+                        .on_change(&self.context, &change)
+                });
+
+                match results_iter.any(|b| b) {
                     true => Some(HandleResult::Update),
                     false => None,
                 }

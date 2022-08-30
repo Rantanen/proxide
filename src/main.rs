@@ -1,4 +1,5 @@
 #![allow(clippy::match_bool)]
+#![allow(clippy::match_like_matches_macro)]
 
 use clap::ArgMatches;
 use crossterm::{
@@ -143,7 +144,7 @@ fn proxide_main() -> Result<(), Error>
     let (session, matches) = match matches.subcommand() {
         ("monitor", Some(sub_m)) => {
             // Monitor sets up the network tack.
-            let options = ConnectionOptions::resolve(&sub_m)?;
+            let options = ConnectionOptions::resolve(sub_m)?;
             network_thread = Some(std::thread::spawn(move || {
                 tokio_main(options, abort_rx, ui_tx)
             }));
@@ -193,7 +194,7 @@ fn proxide_main() -> Result<(), Error>
             };
 
             // Monitor sets up the network tack.
-            let options = ConnectionOptions::resolve(&sub_m)?;
+            let options = ConnectionOptions::resolve(sub_m)?;
             std::thread::spawn(move || tokio_main(options, abort_rx, ui_tx));
             if !stdout_data {
                 println!("Capturing to file: {}...", filename);
@@ -213,7 +214,7 @@ fn proxide_main() -> Result<(), Error>
         (_, _) => panic!("Sub command not handled!"),
     };
 
-    let decoders = decoders::get_decoders(&matches).context(DecoderError {})?;
+    let decoders = decoders::get_decoders(matches).context(DecoderError {})?;
 
     // Run the UI on the current thread.
     //

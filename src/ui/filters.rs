@@ -122,7 +122,7 @@ impl<T> FilterState<T>
                 .filters
                 .get(sf.0)
                 .and_then(|group| group.get(sf.1))
-                .map(|f| f.filter(&item))
+                .map(|f| f.filter(item))
                 .unwrap_or(false);
             (item, filtered, highlight)
         })
@@ -458,22 +458,17 @@ impl<T> FilterMap<T>
 
     pub fn prev_group(&self, current: FilterType) -> Option<&FilterGroupState<T>>
     {
-        for cursor in self.map.values().rev() {
-            if current > cursor.filter_type {
-                return Some(cursor);
-            }
-        }
-        None
+        self.map
+            .values()
+            .rev()
+            .find(|&cursor| current > cursor.filter_type)
     }
 
     pub fn next_group(&self, current: FilterType) -> Option<&FilterGroupState<T>>
     {
-        for cursor in self.map.values() {
-            if current < cursor.filter_type {
-                return Some(cursor);
-            }
-        }
-        None
+        self.map
+            .values()
+            .find(|&cursor| current < cursor.filter_type)
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &FilterGroupState<T>>
