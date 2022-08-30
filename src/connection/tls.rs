@@ -1,13 +1,14 @@
 use rustls::{
-    sign::CertifiedKey, Certificate, ClientConfig, ClientHello, DangerousClientConfig,
-    NoClientAuth, ResolvesServerCert, RootCertStore, ServerCertVerified, ServerCertVerifier,
-    ServerConfig, Session, TLSError,
+    client::{ServerCertVerified, ServerCertVerifier, ServerName},
+    server::{ClientHello, ResolvesServerCert},
+    sign::CertifiedKey,
+    Certificate, ClientConfig, ServerConfig,
 };
+use std::convert::TryFrom;
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
 use tokio_rustls::{TlsAcceptor, TlsConnector};
-use webpki::{DNSName, DNSNameRef};
 
 use super::stream::PrefixedStream;
 use super::*;
@@ -58,28 +59,22 @@ where
     // If there is opaque redirect in place, use that as the outgoing SNI.
     let outgoing_sni = if let Some(redirect_sni) = &details.opaque_redirect {
         // Split the port off. That's not needed for the SNI.
-        let redirect_sni = redirect_sni
+        redirect_sni
             .split(':')
             .next()
-            .expect("Any string has at least one (empty) segment");
-
-        DNSNameRef::try_from_ascii_str(redirect_sni)
-            .context(DNSError {})
-            .context(ConfigurationError {
-                reason: "Invalid target server",
-            })?
+            .expect("Any string has at least one (empty) segment")
+            .to_owned()
     } else {
-        sni.as_ref()
+        sni.clone()
     };
 
     // We'll avoid validating the server certificates, since we don't really know what certs the
     // client trusts.
-    let mut server_stream_config = ClientConfig::new();
-    server_stream_config.set_protocols(&alpn);
-    let mut dangerous_config = DangerousClientConfig {
-        cfg: &mut server_stream_config,
-    };
-    dangerous_config.set_certificate_verifier(Arc::new(NoVerify));
+    let mut server_stream_config = ClientConfig::builder()
+        .with_safe_defaults()
+        .with_custom_certificate_verifier(Arc::new(NoVerify))
+        .with_no_client_auth();
+    server_stream_config.alpn_protocols = alpn;
     let server_stream_config = TlsConnector::from(Arc::new(server_stream_config));
 
     log::debug!(
@@ -88,14 +83,21 @@ where
         target_host
     );
     let server_stream = server_stream_config
-        .connect(outgoing_sni, server)
+        .connect(
+            ServerName::try_from(outgoing_sni.as_ref())
+                .context(DNSError {})
+                .context(ConfigurationError {
+                    reason: "Invalid target server",
+                })?,
+            server,
+        )
         .await
         .context(IoError {})
         .context(ServerError {
             scenario: "connecting TLS",
         })?;
 
-    let alpn = server_stream.get_ref().1.get_alpn_protocol();
+    let alpn = server_stream.get_ref().1.alpn_protocol();
     log::debug!(
         "{} - Server connection done; ALPN='{:?}'",
         details.uuid,
@@ -104,20 +106,16 @@ where
 
     // Establish the client connection.
 
-    let host_for_cert = AsRef::<str>::as_ref(&sni);
-    log::debug!(
-        "{} - Creating certificate for '{}'",
-        details.uuid,
-        host_for_cert
-    );
-    let (cert_chain, private_key) = get_certificate(host_for_cert, ca);
+    log::debug!("{} - Creating certificate for '{}'", details.uuid, &sni);
+    let (cert_chain, private_key) = get_certificate(&sni, ca);
 
-    let mut client_stream_config = ServerConfig::new(NoClientAuth::new());
-    client_stream_config
-        .set_single_cert(cert_chain, private_key)
+    let mut client_stream_config = ServerConfig::builder()
+        .with_safe_defaults()
+        .with_no_client_auth()
+        .with_single_cert(cert_chain, private_key)
         .unwrap();
     if let Some(alpn) = alpn {
-        client_stream_config.set_protocols(&[alpn.to_vec()]);
+        client_stream_config.alpn_protocols = vec![alpn.to_vec()];
     }
     let client_stream_acceptor = TlsAcceptor::from(Arc::new(client_stream_config));
     let client_stream = client_stream_acceptor
@@ -140,7 +138,7 @@ where
 
 struct ClientHelloData
 {
-    sni: Option<DNSName>,
+    sni: Option<String>,
     alpn: Vec<Vec<u8>>,
 }
 struct ClientHelloCapture
@@ -149,15 +147,15 @@ struct ClientHelloCapture
 }
 impl ResolvesServerCert for ClientHelloCapture
 {
-    fn resolve(&self, client_hello: ClientHello) -> Option<CertifiedKey>
+    fn resolve(&self, client_hello: ClientHello) -> Option<Arc<CertifiedKey>>
     {
         log::trace!("Capturing ClientHello from cert resolver");
         let _ = self.channel.lock().unwrap().send(ClientHelloData {
             sni: client_hello.server_name().map(|m| m.to_owned()),
             alpn: client_hello
                 .alpn()
-                .iter()
-                .flat_map(|arr| arr.iter().map(|v| (*v).into()))
+                .into_iter()
+                .flat_map(|arr| arr.map(|v| v.to_owned()).collect::<Vec<_>>())
                 .collect::<Vec<_>>(),
         });
         None
@@ -169,11 +167,13 @@ impl ServerCertVerifier for NoVerify
 {
     fn verify_server_cert(
         &self,
-        _roots: &RootCertStore,
-        _presented_certs: &[Certificate],
-        _dns_name: DNSNameRef,
+        _end_entity: &Certificate,
+        _intermediates: &[Certificate],
+        _server_name: &ServerName,
+        _scts: &mut dyn Iterator<Item = &[u8]>,
         _ocsp_response: &[u8],
-    ) -> Result<ServerCertVerified, TLSError>
+        _now: std::time::SystemTime,
+    ) -> Result<ServerCertVerified, rustls::Error>
     {
         Ok(ServerCertVerified::assertion())
     }
@@ -182,7 +182,7 @@ impl ServerCertVerifier for NoVerify
 struct HelloResult
 {
     data: Vec<u8>,
-    sni: DNSName,
+    sni: String,
     alpn: Vec<Vec<u8>>,
 }
 
@@ -191,11 +191,17 @@ where
     TStream: AsyncRead + Unpin,
 {
     let (sender, receiver) = mpsc::channel();
-    let mut config = ServerConfig::new(NoClientAuth::new());
-    config.cert_resolver = Arc::new(ClientHelloCapture {
-        channel: Mutex::new(sender),
-    });
-    let mut hello_session = rustls::ServerSession::new(&Arc::new(config));
+    let config = ServerConfig::builder()
+        .with_safe_defaults()
+        .with_no_client_auth()
+        .with_cert_resolver(Arc::new(ClientHelloCapture {
+            channel: Mutex::new(sender),
+        }));
+    let mut hello_session = rustls::ServerConnection::new(Arc::new(config))
+        .context(TlsError {})
+        .context(ClientError {
+            scenario: "Connecting to server",
+        })?;
 
     // Process data until we get the ClientHello.
     let mut hello_data: Vec<u8> = Vec::new();
