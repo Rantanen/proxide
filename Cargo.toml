@@ -17,7 +17,7 @@ http = "0.2"
 bytes = { version = "0.5", features = [ "serde" ] }
 log = "0.4"
 simplelog = "0.8"
-tokio = { version = "0.2", features = [ "full", "sync" ] }
+tokio = { version = "1.8", features = [ "full", "sync" ] }
 snafu = "0.6"
 futures = "0.3"
 tui = { version = "0.9", default-features = false, features = [ "crossterm" ] }
