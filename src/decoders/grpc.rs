@@ -13,7 +13,7 @@ pub struct GrpcDecoderFactory
     ctx: Rc<protofish::Context>,
 }
 
-pub fn setup_args<'a, 'b>(app: App<'a, 'b>) -> App<'a, 'b>
+pub fn setup_args(app: App) -> App
 {
     app.arg(
         Arg::with_name("grpc")

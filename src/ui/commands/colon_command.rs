@@ -10,10 +10,10 @@ use crate::session;
 use crate::ui::state::HandleResult;
 
 thread_local! {
-    pub static CMD_API: RefCell<App<'static, 'static>> = RefCell::new(create_app());
+    pub static CMD_API: RefCell<App<'static>> = RefCell::new(create_app());
 }
 
-pub fn create_app() -> App<'static, 'static>
+pub fn create_app() -> App<'static>
 {
     App::new("CMD")
         .setting(clap::AppSettings::NoBinaryName)
@@ -30,7 +30,7 @@ pub fn create_app() -> App<'static, 'static>
                 )
                 .arg(
                     Arg::with_name("format")
-                        .short("f")
+                        .short('f')
                         .long("format")
                         .takes_value(true)
                         .possible_values(&["msgpack", "json"]),
@@ -68,11 +68,15 @@ impl<B: Backend> Executable<B> for ColonCommand
 pub fn execute_matches<B: Backend>(s: ArgMatches, ctx: &mut UiContext) -> Option<HandleResult<B>>
 {
     match s.subcommand() {
-        ("quit", _) => Some(HandleResult::Quit),
-        ("clear", _) => clear_session(ctx),
-        ("export", m) => export_session(ctx, m.unwrap()),
-        (cmd, _) => {
+        Some(("quit", _)) => Some(HandleResult::Quit),
+        Some(("clear", _)) => clear_session(ctx),
+        Some(("export", m)) => export_session(ctx, m),
+        Some((cmd, _)) => {
             toast::show_error(format!("Unknown command: {}", cmd));
+            None
+        }
+        None => {
+            toast::show_error("No command specified");
             None
         }
     }

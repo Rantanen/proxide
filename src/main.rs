@@ -123,8 +123,8 @@ fn proxide_main() -> Result<(), Error>
     // prevent the more complex bits from being performed.
     let matches = app.get_matches();
     match matches.subcommand() {
-        ("config", Some(matches)) => return config::run(matches),
-        ("view", Some(matches)) if matches.is_present("json") => return json::view(matches),
+        Some(("config", matches)) => return config::run(matches),
+        Some(("view", matches)) if matches.is_present("json") => return json::view(matches),
         _ => (), // Ignore other subcommands for now.
     }
 
@@ -142,7 +142,7 @@ fn proxide_main() -> Result<(), Error>
     // The subcommands are responsible for figuring out how the initial session is constructed as
     // well as for giving us back the argument matches so we can initialize the decoders with them.
     let (session, matches) = match matches.subcommand() {
-        ("monitor", Some(sub_m)) => {
+        Some(("monitor", sub_m)) => {
             // Monitor sets up the network tack.
             let options = ConnectionOptions::resolve(sub_m)?;
             network_thread = Some(std::thread::spawn(move || {
@@ -150,7 +150,7 @@ fn proxide_main() -> Result<(), Error>
             }));
             (Session::default(), sub_m)
         }
-        ("capture", Some(sub_m)) => {
+        Some(("capture", sub_m)) => {
             let filename = sub_m.value_of("file").map(String::from).unwrap_or_else(|| {
                 format!(
                     "capture-{}.bin",
@@ -205,13 +205,13 @@ fn proxide_main() -> Result<(), Error>
             )
             .context(SerializationError {});
         }
-        ("view", Some(sub_m)) => {
+        Some(("view", sub_m)) => {
             let filename = sub_m.value_of("file").unwrap();
             let session =
                 session::serialization::read_file(&filename).context(SerializationError {})?;
             (session, sub_m)
         }
-        (_, _) => panic!("Sub command not handled!"),
+        _ => panic!("Sub command not handled!"),
     };
 
     let decoders = decoders::get_decoders(matches).context(DecoderError {})?;

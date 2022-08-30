@@ -10,8 +10,9 @@ const CERT_COMMON_NAME: &str = "UNSAFE Proxide Root Certificate";
 pub fn run(matches: &ArgMatches) -> Result<(), Error>
 {
     match matches.subcommand() {
-        ("ca", Some(matches)) => run_ca(matches),
-        (cmd, _) => unreachable!("Unknown command: {}", cmd),
+        Some(("ca", matches)) => run_ca(matches),
+        Some((cmd, _)) => unreachable!("Unknown command: {}", cmd),
+        _ => unreachable!("No subcommand specified"),
     }
 }
 

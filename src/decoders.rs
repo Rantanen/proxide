@@ -28,7 +28,7 @@ pub enum Error
 
 type Result<S, E = Error> = std::result::Result<S, E>;
 
-pub fn setup_args<'a, 'b>(app: clap::App<'a, 'b>) -> clap::App<'a, 'b>
+pub fn setup_args(app: clap::App) -> clap::App
 {
     grpc::setup_args(app)
 }

@@ -13,7 +13,6 @@ pub fn setup_app(version: &str) -> App
         .author("Mikko Rantanen <rantanen@jubjubnest.net>")
         .setting(AppSettings::SubcommandRequiredElseHelp)
         .global_setting(AppSettings::UnifiedHelpMessage)
-        .global_setting(AppSettings::VersionlessSubcommands)
         .subcommand(
             SubCommand::with_name("view")
                 .about("View traffic from a session or capture file")
@@ -59,7 +58,7 @@ long periods with the only limit being the disk usage."
                 .json_options()
                 .arg(
                     Arg::with_name("file")
-                        .short("f")
+                        .short('f')
                         .value_name("file")
                         .help("Specify the output file. Defaults to 'capture-<timestamp>.bin'."),
                 ),
@@ -86,7 +85,7 @@ clients for them to accept these certificates."
                         )
                         .arg(
                             Arg::with_name("force")
-                                .short("f")
+                                .short('f')
                                 .long("force")
                                 .requires("create")
                                 .help("Overwrite existing files.")
@@ -147,7 +146,7 @@ command when it is not needed anymore."
                         .arg(
                             Arg::with_name("duration")
                                 .long("duration")
-                                .default_value_if("create", None, "7")
+                                .default_value_if("create", None, Some("7"))
                                 .requires("create")
                                 .validator(|v| {
                                     v.parse::<u32>()
@@ -178,17 +177,17 @@ automatically capped to 2000 years."
         )
 }
 
-trait AppEx<'a, 'b>: Sized
+trait AppEx<'a>: Sized
 {
-    fn app(self) -> App<'a, 'b>;
+    fn app(self) -> App<'a>;
 
-    fn connection_options(self) -> App<'a, 'b>
+    fn connection_options(self) -> App<'a>
     {
         self.app()
             .cert_options(true)
             .arg(
                 Arg::with_name("listen")
-                    .short("l")
+                    .short('l')
                     .value_name("port")
                     .required(true)
                     .takes_value(true)
@@ -201,7 +200,7 @@ directly (when using -t) or through a proxy setting (when using -p)."
             )
             .arg(
                 Arg::with_name("target")
-                    .short("t")
+                    .short('t')
                     .long("target")
                     .value_name("host:port")
                     .takes_value(true)
@@ -234,7 +233,7 @@ be used to connect to other hosts in the local network."
             )
             .arg(
                 Arg::with_name("proxy")
-                    .short("p")
+                    .short('p')
                     .long("proxy")
                     .value_name("filter")
                     .min_values(0)
@@ -260,7 +259,7 @@ connections to a target server.
             )
     }
 
-    fn cert_options(self, connection: bool) -> App<'a, 'b>
+    fn cert_options(self, connection: bool) -> App<'a>
     {
         // Specify the common parts of the arguments.
         let cert = Arg::with_name("ca-certificate")
@@ -300,22 +299,22 @@ certificates."
         self.app().arg(cert).arg(key)
     }
 
-    fn json_options(self) -> App<'a, 'b>
+    fn json_options(self) -> App<'a>
     {
         self.app().arg(Arg::with_name("json").long("json").help(
             "Output in JSON format. Disables UI when used with 'view' or 'monitor' commands.",
         ))
     }
 
-    fn decoder_options(self) -> App<'a, 'b>
+    fn decoder_options(self) -> App<'a>
     {
         crate::decoders::setup_args(self.app())
     }
 }
 
-impl<'a, 'b> AppEx<'a, 'b> for App<'a, 'b>
+impl<'a> AppEx<'a> for App<'a>
 {
-    fn app(self) -> App<'a, 'b>
+    fn app(self) -> App<'a>
     {
         self
     }
