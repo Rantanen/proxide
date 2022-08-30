@@ -61,7 +61,7 @@ impl<S: AsyncRead> AsyncRead for PrefixedRead<S>
                 // here.
                 self.prefix = None;
             } else if p.len() <= buf.len() {
-                buf[..p.len()].copy_from_slice(&p);
+                buf[..p.len()].copy_from_slice(p);
                 let copied = p.len();
                 self.prefix = None;
                 return Poll::Ready(Ok(copied));

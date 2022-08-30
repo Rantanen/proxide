@@ -137,7 +137,7 @@ pub fn capture_to_file<F: FnMut(&CaptureStatus) + Send + 'static>(
         Status(CaptureStatus),
         Callback,
         Quit,
-    };
+    }
     let (status_tx, status_rx) = channel();
     let status_thread = std::thread::spawn({
         let status_tx = status_tx.clone();
@@ -236,8 +236,8 @@ pub fn read_capture_file(mut file: std::fs::File) -> Result<Session, Serializati
 {
     let mut session = Session::default();
 
-    let byte = &mut [0u8];
     let mut payload: Vec<u8> = Vec::new();
+    let byte = &mut [0u8];
     loop {
         // Read length header byte by byte. We'll need to read this one byte at a time to avoid
         // over-reading into the actual payload

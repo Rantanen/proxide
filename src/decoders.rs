@@ -35,11 +35,9 @@ pub fn setup_args<'a, 'b>(app: clap::App<'a, 'b>) -> clap::App<'a, 'b>
 
 pub fn get_decoders(matches: &clap::ArgMatches) -> Result<Decoders, Error>
 {
-    let mut decoders = vec![];
-    decoders.push(raw::initialize(&matches)?);
-    decoders.push(grpc::initialize(&matches)?);
+    let decoders = vec![raw::initialize(matches)?, grpc::initialize(matches)?];
 
-    Ok(Decoders::new(decoders.into_iter().filter_map(|o| o)))
+    Ok(Decoders::new(decoders.into_iter().flatten()))
 }
 
 pub struct Decoders
@@ -64,16 +62,14 @@ impl Decoders
     {
         self.factories
             .iter()
-            .map(move |d| d.try_create(request, message))
-            .filter_map(|o| o)
+            .filter_map(move |d| d.try_create(request, message))
     }
 
     pub fn index(&self, request: &RequestData, message: &MessageData) -> Vec<String>
     {
         self.factories
             .iter()
-            .map(|d| d.try_create(request, message))
-            .filter_map(|o| o)
+            .filter_map(|d| d.try_create(request, message))
             .flat_map(|d| d.index(message).into_iter())
             .collect()
     }

@@ -88,12 +88,11 @@ impl DetailsPane
             )),
             Text::raw(format!(
                 " Timestamp:  {}\n",
-                request.request_data.start_timestamp.to_string()
+                request.request_data.start_timestamp
             )),
             Text::raw(format!(
                 " Status:     {} (in {})\n",
-                request.request_data.status.to_string(),
-                duration
+                request.request_data.status, duration
             )),
         ];
         let details = Paragraph::new(text.iter());

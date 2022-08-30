@@ -18,6 +18,7 @@ mod tls;
 
 #[derive(Debug, Snafu)]
 #[snafu(visibility(pub(crate)))]
+#[allow(clippy::enum_variant_names)]
 pub enum ConfigurationErrorKind
 {
     DNSError
@@ -37,6 +38,7 @@ pub enum ConfigurationErrorKind
 
 #[derive(Debug, Snafu)]
 #[snafu(visibility(pub(crate)))]
+#[allow(clippy::enum_variant_names)]
 pub enum EndpointError
 {
     IoError
@@ -51,7 +53,7 @@ pub enum EndpointError
     {
         source: h2::Error
     },
-    TLSError
+    TlsError
     {
         source: rustls::TLSError
     },
@@ -65,6 +67,7 @@ pub enum EndpointError
 
 #[derive(Debug, Snafu)]
 #[snafu(visibility(pub(crate)))]
+#[allow(clippy::enum_variant_names)]
 pub enum Error
 {
     #[snafu(display("Configuration error: {}", reason))]
@@ -271,7 +274,7 @@ where
     TServer: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
     let ui_clone = ui.clone();
-    if protocol == demux::Protocol::TLS {
+    if protocol == demux::Protocol::Tls {
         let streams = tls::handle(&mut details, streams, options.clone(), target).await?;
         http2::handle(details, src_addr, streams, ui_clone).await?;
     } else {

@@ -99,7 +99,7 @@ where
     log::debug!(
         "{} - Server connection done; ALPN='{:?}'",
         details.uuid,
-        alpn.map(|o| String::from_utf8_lossy(o))
+        alpn.map(String::from_utf8_lossy)
     );
 
     // Establish the client connection.
@@ -237,7 +237,7 @@ where
 
         // No ClientHello yet. Handle the result as normal.
         process_result
-            .context(super::TLSError {})
+            .context(super::TlsError {})
             .context(ClientError {
                 scenario: "parsing ClientHello",
             })?;
