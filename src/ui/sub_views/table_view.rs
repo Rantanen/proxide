@@ -2,7 +2,7 @@ use crossterm::event::KeyModifiers;
 use std::borrow::Cow;
 use tui::backend::Backend;
 use tui::layout::Constraint;
-use tui::style::{Modifier, StyleDiff};
+use tui::style::{Modifier, Style};
 use tui::widgets::{Row, Table, TableState};
 use uuid::Uuid;
 
@@ -77,7 +77,7 @@ impl<T: crate::session::HasKey> TableView<T>
     pub fn on_active_input<B: Backend>(
         &mut self,
         content: &IndexedVec<T>,
-        e: CTEvent,
+        e: &CTEvent,
         _size: Rect,
     ) -> Option<HandleResult<B>>
     {
@@ -238,35 +238,36 @@ impl<T: crate::session::HasKey> TableView<T>
         let group_filter = &self.group_filter;
 
         let widths = columns.iter().map(|c| c.constraint).collect::<Vec<_>>();
-        let mut table = Table::new(
-            columns.iter().map(|c| c.title),
-            self.filter.iter(content, highlight_filter).map(
-                |(item, is_filtered, selected_filter)| {
-                    let closure = move |c: &Column<T>| (c.map)(item);
+        let mut table = Table::new(self.filter.iter(content, highlight_filter).map(
+            |(item, is_filtered, selected_filter)| {
+                let closure = move |c: &Column<T>| (c.map)(item);
 
-                    let is_group = if let Some(cs) = currently_selected {
-                        (group_filter)(cs, item)
-                    } else {
-                        false
-                    };
+                let is_group = if let Some(cs) = currently_selected {
+                    (group_filter)(cs, item)
+                } else {
+                    false
+                };
 
-                    let style = crate::ui::style::request_row_style(
-                        is_active,
-                        is_filtered,
-                        is_group,
-                        selected_filter,
-                    );
-                    Row::StyledData(columns.iter().map(closure), style)
-                },
-            ),
-        )
+                let style = crate::ui::style::request_row_style(
+                    is_active,
+                    is_filtered,
+                    is_group,
+                    selected_filter,
+                );
+                Row::new(columns.iter().map(closure)).style(style)
+            },
+        ))
+        .header(Row::new(columns.iter().map(|c| c.title)))
         .block(block)
         .widths(&widths)
         .highlight_symbol("> ");
         if is_active {
-            table = table.highlight_style_diff(StyleDiff::default().modifier(Modifier::BOLD));
+            table = table.highlight_style(Style {
+                add_modifier: Modifier::BOLD,
+                ..Style::default()
+            });
         } else {
-            table = table.highlight_style_diff(StyleDiff::default());
+            table = table.highlight_style(Style::default());
         }
 
         f.render_stateful_widget(table, chunk, &mut self.tui_state)

@@ -4,10 +4,7 @@ use crossterm::{
 };
 use snafu::{ResultExt, Snafu};
 use std::thread;
-use std::{
-    io::{stdout, Write},
-    sync::mpsc,
-};
+use std::{io::stdout, sync::mpsc};
 use tui::{backend::CrosstermBackend, Terminal};
 
 use crate::decoders::Decoders;

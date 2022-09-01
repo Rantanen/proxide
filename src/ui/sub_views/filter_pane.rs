@@ -1,7 +1,8 @@
 use crossterm::event::KeyCode;
 use tui::layout::{Constraint, Direction, Layout};
-use tui::style::StyleDiff;
-use tui::widgets::{List, ListState, Paragraph, Text};
+use tui::style::Style;
+use tui::text::{Span, Spans, Text};
+use tui::widgets::{List, ListItem, ListState, Paragraph};
 
 use crate::ui::prelude::*;
 
@@ -41,7 +42,7 @@ impl FilterPane
         filter: &mut FilterState<EncodedRequest>,
         _ctx: &UiContext,
         request: Option<&EncodedRequest>,
-        e: CTEvent,
+        e: &CTEvent,
     ) -> Option<HandleResult<B>>
     {
         if let Some(chord) = &mut self.chord {
@@ -85,7 +86,7 @@ impl FilterPane
     pub fn on_active_input<B: Backend>(
         &mut self,
         filter: &mut FilterState<EncodedRequest>,
-        e: CTEvent,
+        e: &CTEvent,
     ) -> Option<HandleResult<B>>
     {
         if let CTEvent::Key(key) = e {
@@ -233,15 +234,16 @@ impl FilterPane
         self.ensure_selection(filter);
 
         let block = create_block("Request [F]ilters/[H]ighlights");
+        let block_rect = block.inner(chunk);
         f.render_widget(block, chunk);
 
         let sub_chunks = Layout::default()
             .direction(Direction::Vertical)
             .margin(0)
             .constraints([Constraint::Length(10), Constraint::Percentage(100)].as_ref())
-            .split(block.inner(chunk));
+            .split(block_rect);
 
-        let mut keys_text = vec![Text::raw("\n")];
+        let mut keys_text = vec![Span::raw("\n")];
         if let Some(request) = request {
             if let Some(conn) = ctx
                 .data
@@ -255,7 +257,7 @@ impl FilterPane
                     true => "Disable",
                 };
 
-                keys_text.push(Text::raw(format!(
+                keys_text.push(Span::raw(format!(
                     "[c]: {} filter by connection: {}\n",
                     enable_disable, conn.client_addr
                 )));
@@ -268,23 +270,23 @@ impl FilterPane
                 true => "Disable",
             };
 
-            keys_text.push(Text::raw(format!(
+            keys_text.push(Span::raw(format!(
                 "[p]: {} filter by path: {}\n",
                 enable_disable,
                 request.request_data.uri.path()
             )));
         }
         keys_text.extend(vec![
-            Text::raw("[s?]: Toggle filter by status\n"),
-            Text::raw(" - [ss]: Status Success\n"),
-            Text::raw(" - [sf]: Status Fail\n"),
-            Text::raw("\n"),
-            Text::raw("[t]: Toggle selected filter or filter group\n"),
-            Text::raw("[x]: Remove selected filter or filter group\n"),
-            Text::raw("[X]: Remove all filters\n"),
+            Span::raw("[s?]: Toggle filter by status\n"),
+            Span::raw(" - [ss]: Status Success\n"),
+            Span::raw(" - [sf]: Status Fail\n"),
+            Span::raw("\n"),
+            Span::raw("[t]: Toggle selected filter or filter group\n"),
+            Span::raw("[x]: Remove selected filter or filter group\n"),
+            Span::raw("[X]: Remove all filters\n"),
         ]);
 
-        let keys_paragraph = Paragraph::new(keys_text.iter());
+        let keys_paragraph = Paragraph::new(Text::from(Spans::from(keys_text)));
         f.render_widget(keys_paragraph, sub_chunks[0]);
 
         let mut filter_items = vec![];
@@ -320,10 +322,15 @@ impl FilterPane
             }
         }
 
-        let filter_list = List::new(filter_items.into_iter())
-            .block(create_control_block("Current filters", is_active))
-            .highlight_style_diff(StyleDiff::default())
-            .highlight_symbol("> ");
+        let filter_list = List::new(
+            filter_items
+                .into_iter()
+                .map(ListItem::new)
+                .collect::<Vec<_>>(),
+        )
+        .block(create_control_block("Current filters", is_active))
+        .highlight_style(Style::default())
+        .highlight_symbol("> ");
         f.render_stateful_widget(filter_list, sub_chunks[1], &mut state)
     }
 

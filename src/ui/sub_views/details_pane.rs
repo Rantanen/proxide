@@ -1,5 +1,6 @@
 use tui::layout::{Constraint, Direction, Layout};
-use tui::widgets::{Paragraph, Text};
+use tui::text::{Span, Spans, Text};
+use tui::widgets::Paragraph;
 use uuid::Uuid;
 
 use crate::ui::prelude::*;
@@ -14,7 +15,7 @@ impl DetailsPane
     pub fn on_input<B: Backend>(
         &mut self,
         req: &EncodedRequest,
-        e: CTEvent,
+        e: &CTEvent,
     ) -> Option<HandleResult<B>>
     {
         if let CTEvent::Key(key) = e {
@@ -50,13 +51,14 @@ impl DetailsPane
         };
 
         let block = create_block("Details");
+        let block_rect = block.inner(chunk);
         f.render_widget(block, chunk);
 
         let details_chunks = Layout::default()
             .direction(Direction::Vertical)
             .margin(0)
             .constraints([Constraint::Length(6), Constraint::Percentage(50)].as_ref())
-            .split(block.inner(chunk));
+            .split(block_rect);
         let mut c = details_chunks[1];
         c.x -= 1;
         c.width += 2;
@@ -65,20 +67,20 @@ impl DetailsPane
             .direction(Direction::Horizontal)
             .margin(0)
             .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
-            .split(block.inner(c));
+            .split(block_rect);
 
         let duration = match request.request_data.end_timestamp {
             None => "(Pending)".to_string(),
             Some(end) => format_duration(end - request.request_data.start_timestamp),
         };
 
-        let text = vec![
-            Text::raw("\n"),
-            Text::raw(format!(
+        let spans = vec![
+            Span::raw("\n"),
+            Span::raw(format!(
                 " Request:    {} {}\n",
                 request.request_data.method, request.request_data.uri
             )),
-            Text::raw(format!(
+            Span::raw(format!(
                 " Protocol:   {}\n",
                 conn.protocol_stack
                     .iter()
@@ -86,16 +88,16 @@ impl DetailsPane
                     .collect::<Vec<_>>()
                     .join(" -> ")
             )),
-            Text::raw(format!(
+            Span::raw(format!(
                 " Timestamp:  {}\n",
                 request.request_data.start_timestamp
             )),
-            Text::raw(format!(
+            Span::raw(format!(
                 " Status:     {} (in {})\n",
                 request.request_data.status, duration
             )),
         ];
-        let details = Paragraph::new(text.iter());
+        let details = Paragraph::new(Text::from(Spans::from(spans)));
         f.render_widget(details, details_chunks[0]);
 
         MessageView {

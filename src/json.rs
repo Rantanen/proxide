@@ -74,9 +74,7 @@ fn get_message_data(
     }
 }
 
-fn text_to_string(t: tui::widgets::Text) -> String
+fn text_to_string(s: tui::text::Spans) -> String
 {
-    match t {
-        tui::widgets::Text::Raw(s) | tui::widgets::Text::Styled(s, _) => s.into(),
-    }
+    s.0.iter().map(|s| s.content.as_ref()).collect::<String>()
 }

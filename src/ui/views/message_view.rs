@@ -1,7 +1,7 @@
 use super::prelude::*;
 use crate::decoders::Decoder;
 use crossterm::event::KeyCode;
-use tui::widgets::{Paragraph, Text, Wrap};
+use tui::widgets::{Paragraph, Wrap};
 use uuid::Uuid;
 
 use crate::session::{MessageData, RequestData, RequestPart};
@@ -27,8 +27,12 @@ impl MessageView
             .get_decoder(ctx, request, message)
             .decode(message)
             .into_iter()
-            .map(|text| match text {
-                Text::Raw(cow) | Text::Styled(cow, _) => cow,
+            .map(|spans| {
+                spans
+                    .0
+                    .iter()
+                    .map(|s| s.content.as_ref())
+                    .collect::<String>()
             })
             .collect();
 
@@ -100,14 +104,14 @@ impl<B: Backend> View<B> for MessageView
         let decoder = self.get_decoder(ctx, request, message);
         let text = decoder.decode(message);
 
-        let request_data = Paragraph::new(text.iter())
+        let request_data = Paragraph::new(text)
             .block(block)
             .wrap(Wrap { trim: false })
             .scroll((self.offset, 0));
         f.render_widget(request_data, chunk);
     }
 
-    fn on_input(&mut self, ctx: &UiContext, e: CTEvent, size: Rect) -> Option<HandleResult<B>>
+    fn on_input(&mut self, ctx: &UiContext, e: &CTEvent, size: Rect) -> Option<HandleResult<B>>
     {
         match e {
             CTEvent::Key(key) => match key.code {

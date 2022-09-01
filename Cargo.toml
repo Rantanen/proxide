@@ -20,8 +20,8 @@ simplelog = "0.8"
 tokio = { version = "1", features = [ "full", "sync" ] }
 snafu = "0.6"
 futures = "0.3"
-tui = { version = "0.9", default-features = false, features = [ "crossterm" ] }
-crossterm = "0.17"
+tui = { version = "0.19", default-features = false, features = [ "crossterm" ] }
+crossterm = "0.25"
 uuid = { version = "0.8", features = [ "v4", "serde" ] }
 chrono = { version = "0.4", features = ["serde"] }
 clap = "3"
@@ -40,6 +40,3 @@ base64 = "0.11"
 wildmatch = "1"
 glob = "0.3"
 shell-words = "1"
-
-[patch.crates-io]
-tui = { git = 'https://github.com/Rantanen/tui-rs', branch = 'style-merge' }

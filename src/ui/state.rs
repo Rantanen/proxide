@@ -1,4 +1,4 @@
-use crossterm::event::{Event as CrosstermEvent, KeyCode};
+use crossterm::event::{Event as CTEvent, KeyCode};
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::mpsc::Sender;
@@ -7,7 +7,8 @@ use tui::buffer::Buffer;
 use tui::layout::Rect;
 use tui::style::{Color, Style};
 use tui::terminal::Frame;
-use tui::widgets::{Block, Borders, Clear, Paragraph, Text, Widget, Wrap};
+use tui::text::Text;
+use tui::widgets::{Block, Borders, Clear, Paragraph, Widget, Wrap};
 use uuid::Uuid;
 
 use super::toast::ToastEvent;
@@ -21,7 +22,7 @@ use crate::ui::views::{self, View};
 pub enum UiEvent
 {
     Redraw,
-    Crossterm(CrosstermEvent),
+    Crossterm(CTEvent),
     Toast(ToastEvent),
     SessionEvent(Box<SessionEvent>),
 }
@@ -121,7 +122,7 @@ impl<B: Backend> ProxideUi<B>
                     false => None,
                 }
             }
-            UiEvent::Crossterm(e) => self.on_input(e, self.context.size),
+            UiEvent::Crossterm(e) => self.on_input(&e, self.context.size),
             UiEvent::Toast(e) => {
                 match e {
                     ToastEvent::Show { uuid, text, error } => {
@@ -155,7 +156,7 @@ impl<B: Backend> ProxideUi<B>
         Some(HandleResult::Update)
     }
 
-    fn on_input(&mut self, e: CrosstermEvent, size: Rect) -> Option<HandleResult<B>>
+    fn on_input(&mut self, e: &CTEvent, size: Rect) -> Option<HandleResult<B>>
     {
         let result = if let Some(cmd) = &mut self.input_command {
             cmd.on_input(&mut self.context, e)
@@ -171,16 +172,16 @@ impl<B: Backend> ProxideUi<B>
         }
 
         Some(match e {
-            CrosstermEvent::Resize(width, height) => {
+            CTEvent::Resize(width, height) => {
                 self.context.size = Rect {
                     x: 0,
                     y: 0,
-                    width,
-                    height,
+                    width: *width,
+                    height: *height,
                 };
                 HandleResult::Update
             }
-            CrosstermEvent::Key(key) => match key.code {
+            CTEvent::Key(key) => match key.code {
                 KeyCode::Char(':') => {
                     self.input_command = Some(commands::CommandState {
                         help: "Enter command".to_string(),
@@ -268,7 +269,7 @@ impl<B: Backend> ProxideUi<B>
         };
 
         f.render_widget(
-            Paragraph::new([Text::raw(&help_text)].iter()).wrap(Wrap { trim: false }),
+            Paragraph::new(Text::raw(&help_text)).wrap(Wrap { trim: false }),
             text_chunk,
         );
 
@@ -304,7 +305,7 @@ impl Toast
             }));
         f.render_widget(Clear, rect);
         f.render_widget(
-            Paragraph::new([Text::raw(&self.text)].iter())
+            Paragraph::new(Text::raw(&self.text))
                 .block(block)
                 .wrap(Wrap { trim: false }),
             rect,
