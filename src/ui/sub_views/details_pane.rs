@@ -51,14 +51,12 @@ impl DetailsPane
         };
 
         let block = create_block("Details");
-        let block_rect = block.inner(chunk);
-        f.render_widget(block, chunk);
 
         let details_chunks = Layout::default()
             .direction(Direction::Vertical)
             .margin(0)
             .constraints([Constraint::Length(6), Constraint::Percentage(50)].as_ref())
-            .split(block_rect);
+            .split(block.inner(chunk));
         let mut c = details_chunks[1];
         c.x -= 1;
         c.width += 2;
@@ -67,7 +65,9 @@ impl DetailsPane
             .direction(Direction::Horizontal)
             .margin(0)
             .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
-            .split(block_rect);
+            .split(block.inner(c));
+
+        f.render_widget(block, chunk);
 
         let duration = match request.request_data.end_timestamp {
             None => "(Pending)".to_string(),
@@ -97,7 +97,9 @@ impl DetailsPane
                 request.request_data.status, duration
             )),
         ];
-        let details = Paragraph::new(Text::from(Spans::from(spans)));
+        let details = Paragraph::new(Text::from(
+            spans.into_iter().map(Spans::from).collect::<Vec<_>>(),
+        ));
         f.render_widget(details, details_chunks[0]);
 
         MessageView {

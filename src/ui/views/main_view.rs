@@ -26,7 +26,7 @@ impl Default for MainView
                 .with_group_filter(|current, maybe| {
                     current.request_data.connection_uuid == maybe.request_data.connection_uuid
                 })
-                .with_column("Requests", Constraint::Percentage(100), |item| {
+                .with_column("Requests", None, |item| {
                     format!(
                         "{} {}",
                         item.request_data.method,
@@ -37,15 +37,13 @@ impl Default for MainView
                             .unwrap_or_else(|| "/".to_string())
                     )
                 })
-                .with_column("Timestamp", Constraint::Length(10), |item| {
+                .with_column("Timestamp", Some(10), |item| {
                     item.request_data
                         .start_timestamp
                         .format("%H:%M:%S")
                         .to_string()
                 })
-                .with_column("St.", Constraint::Length(5), |item| {
-                    item.request_data.status.to_string()
-                }),
+                .with_column("St.", Some(5), |item| item.request_data.status.to_string()),
         }
     }
 }
