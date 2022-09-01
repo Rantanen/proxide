@@ -243,7 +243,7 @@ impl FilterPane
             .constraints([Constraint::Length(10), Constraint::Percentage(100)].as_ref())
             .split(block_rect);
 
-        let mut keys_text = vec![Span::raw("\n")];
+        let mut keys_text = vec![Spans::from(Span::raw("\n"))];
         if let Some(request) = request {
             if let Some(conn) = ctx
                 .data
@@ -257,10 +257,10 @@ impl FilterPane
                     true => "Disable",
                 };
 
-                keys_text.push(Span::raw(format!(
+                keys_text.push(Spans::from(Span::raw(format!(
                     "[c]: {} filter by connection: {}\n",
                     enable_disable, conn.client_addr
-                )));
+                ))));
             }
 
             let enable_disable = match filter.has_filter(&PathFilter {
@@ -270,23 +270,23 @@ impl FilterPane
                 true => "Disable",
             };
 
-            keys_text.push(Span::raw(format!(
+            keys_text.push(Spans::from(Span::raw(format!(
                 "[p]: {} filter by path: {}\n",
                 enable_disable,
                 request.request_data.uri.path()
-            )));
+            ))));
         }
         keys_text.extend(vec![
-            Span::raw("[s?]: Toggle filter by status\n"),
-            Span::raw(" - [ss]: Status Success\n"),
-            Span::raw(" - [sf]: Status Fail\n"),
-            Span::raw("\n"),
-            Span::raw("[t]: Toggle selected filter or filter group\n"),
-            Span::raw("[x]: Remove selected filter or filter group\n"),
-            Span::raw("[X]: Remove all filters\n"),
+            Spans::from(Span::raw("[s?]: Toggle filter by status\n")),
+            Spans::from(Span::raw(" - [ss]: Status Success\n")),
+            Spans::from(Span::raw(" - [sf]: Status Fail\n")),
+            Spans::from(Span::raw("\n")),
+            Spans::from(Span::raw("[t]: Toggle selected filter or filter group\n")),
+            Spans::from(Span::raw("[x]: Remove selected filter or filter group\n")),
+            Spans::from(Span::raw("[X]: Remove all filters\n")),
         ]);
 
-        let keys_paragraph = Paragraph::new(Text::from(Spans::from(keys_text)));
+        let keys_paragraph = Paragraph::new(Text::from(keys_text));
         f.render_widget(keys_paragraph, sub_chunks[0]);
 
         let mut filter_items = vec![];

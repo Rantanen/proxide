@@ -100,11 +100,11 @@ impl Decoder for HeaderDecoder
 
     fn decode(&self, msg: &MessageData) -> Text
     {
-        Text::from(Spans::from(self.process(
+        Text::from(self.process(
             msg,
-            |s| Some(Span::raw(s)),
-            |k, v| Span::raw(format!(" - {}: {:?}\n", k, v)),
-        )))
+            |s| Some(Spans::from(Span::raw(s))),
+            |k, v| Spans::from(Span::raw(format!(" - {}: {:?}\n", k, v))),
+        ))
     }
 
     fn index(&self, msg: &MessageData) -> Vec<String>

@@ -28,7 +28,7 @@ pub struct TableView<T>
 struct Column<T>
 {
     title: &'static str,
-    constraint: Constraint,
+    width: Option<u16>,
     map: fn(&T) -> String,
 }
 
@@ -42,9 +42,14 @@ impl<T: crate::session::HasKey> TableView<T>
 {
     pub fn new<TTitle: Into<Cow<'static, str>>>(title: TTitle) -> Self
     {
+        // Ensure "something" is selected to make sure TUI reserves space for
+        // the selection marker in the layout.
+        let mut state = TableState::default();
+        state.select(Some(usize::MAX));
+
         Self {
             title: title.into(),
-            tui_state: Default::default(),
+            tui_state: state,
             user_selected: Default::default(),
             locked: None,
             group_filter: |_, _| true,
@@ -56,15 +61,11 @@ impl<T: crate::session::HasKey> TableView<T>
     pub fn with_column(
         mut self,
         title: &'static str,
-        constraint: Constraint,
+        width: Option<u16>,
         map: fn(&T) -> String,
     ) -> Self
     {
-        self.columns.push(Column {
-            title,
-            constraint,
-            map,
-        });
+        self.columns.push(Column { title, width, map });
         self
     }
 
@@ -144,7 +145,7 @@ impl<T: crate::session::HasKey> TableView<T>
             None => {
                 self.user_selected = None;
                 if self.filter.is_empty_filtered(content) {
-                    self.tui_state.select(None);
+                    self.tui_state.select(Some(usize::MAX));
                 } else {
                     self.tui_state
                         .select(Some(self.filter.len_filtered(content) - 1));
@@ -237,7 +238,15 @@ impl<T: crate::session::HasKey> TableView<T>
         let columns = &self.columns;
         let group_filter = &self.group_filter;
 
-        let widths = columns.iter().map(|c| c.constraint).collect::<Vec<_>>();
+        let total_width: u16 = columns.iter().filter_map(|c| c.width).sum();
+        let remainder = chunk.width - total_width
+            - 2  // Columns spacing.
+            - 2  // Borders.
+            - 2; // Highlight marker.
+        let widths = columns
+            .iter()
+            .map(|c| Constraint::Length(c.width.unwrap_or(remainder)))
+            .collect::<Vec<_>>();
         let mut table = Table::new(self.filter.iter(content, highlight_filter).map(
             |(item, is_filtered, selected_filter)| {
                 let closure = move |c: &Column<T>| (c.map)(item);
