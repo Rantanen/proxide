@@ -2,7 +2,7 @@ use std::io::Result;
 use std::pin::Pin;
 use std::task::Context;
 use std::task::Poll;
-use tokio::io::{split, AsyncRead, AsyncWrite, ReadHalf, WriteHalf};
+use tokio::io::{split, AsyncRead, AsyncWrite, ReadBuf, ReadHalf, WriteHalf};
 
 pub struct PrefixedRead<S>
 {
@@ -23,6 +23,7 @@ where
     pub fn new(prefix: Vec<u8>, stream: S) -> Self
     {
         let (read, write) = split(stream);
+        log::trace!("Prefix: {:?}", prefix);
         Self {
             read: PrefixedRead {
                 prefix: Some(prefix),
@@ -42,7 +43,7 @@ impl<S: AsyncWrite + AsyncRead + Unpin> PrefixedStream<S> {}
 
 impl<S: AsyncRead> AsyncRead for PrefixedStream<S>
 {
-    fn poll_read(self: Pin<&mut Self>, cx: &mut Context, buf: &mut [u8]) -> Poll<Result<usize>>
+    fn poll_read(self: Pin<&mut Self>, cx: &mut Context, buf: &mut ReadBuf) -> Poll<Result<()>>
     {
         let inner_pin = unsafe { self.map_unchecked_mut(|s| &mut s.read) };
         inner_pin.poll_read(cx, buf)
@@ -51,8 +52,8 @@ impl<S: AsyncRead> AsyncRead for PrefixedStream<S>
 
 impl<S: AsyncRead> AsyncRead for PrefixedRead<S>
 {
-    fn poll_read(mut self: Pin<&mut Self>, cx: &mut Context, buf: &mut [u8])
-        -> Poll<Result<usize>>
+    fn poll_read(mut self: Pin<&mut Self>, cx: &mut Context, buf: &mut ReadBuf)
+        -> Poll<Result<()>>
     {
         if let Some(p) = &mut self.prefix {
             if p.is_empty() {
@@ -60,16 +61,15 @@ impl<S: AsyncRead> AsyncRead for PrefixedRead<S>
                 // a return of zero bytes as stream having ended, which is not what is happening
                 // here.
                 self.prefix = None;
-            } else if p.len() <= buf.len() {
-                buf[..p.len()].copy_from_slice(p);
-                let copied = p.len();
+            } else if p.len() <= buf.remaining() {
+                buf.put_slice(p);
                 self.prefix = None;
-                return Poll::Ready(Ok(copied));
+                return Poll::Ready(Ok(()));
             } else {
-                let mut taken = p.split_off(buf.len());
+                let mut taken = p.split_off(buf.remaining());
                 std::mem::swap(&mut taken, p);
-                buf.copy_from_slice(&taken);
-                return Poll::Ready(Ok(buf.len()));
+                buf.put_slice(&taken);
+                return Poll::Ready(Ok(()));
             }
         }
 

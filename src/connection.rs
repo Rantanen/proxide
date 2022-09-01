@@ -23,7 +23,7 @@ pub enum ConfigurationErrorKind
 {
     DNSError
     {
-        source: webpki::InvalidDNSNameError,
+        source: rustls::client::InvalidDnsNameError,
     },
     UriError
     {
@@ -55,7 +55,7 @@ pub enum EndpointError
     },
     TlsError
     {
-        source: rustls::TLSError
+        source: rustls::Error
     },
 
     #[snafu(display("{}", reason))]
@@ -240,6 +240,7 @@ pub async fn connect_phase(
         // Not a CONNECT request; Use the user supplied target server as the server address and
         // redirect the whole client stream there.
         details.opaque_redirect = Some(target_server.to_string());
+        log::trace!("Connecting directly to {}", target_server);
         let server = TcpStream::connect(target_server)
             .await
             .context(IoError {})

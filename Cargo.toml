@@ -12,12 +12,12 @@ readme = "README.md"
 exclude = [ "/test" ]
 
 [dependencies]
-h2 = "0.2"
+h2 = "0.3"
 http = "0.2"
-bytes = { version = "0.5", features = [ "serde" ] }
+bytes = { version = "1.2", features = [ "serde" ] }
 log = "0.4"
 simplelog = "0.8"
-tokio = { version = "0.2", features = [ "full", "sync" ] }
+tokio = { version = "1", features = [ "full", "sync" ] }
 snafu = "0.6"
 futures = "0.3"
 tui = { version = "0.9", default-features = false, features = [ "crossterm" ] }
@@ -31,9 +31,8 @@ http-serde = "1"
 rmp-serde = "0.14"
 lazy_static = "1"
 ctrlc = "3"
-rustls = { version = "0.17", features = [ "dangerous_configuration" ] }
-webpki = "0.21"
-tokio-rustls = "0.13"
+rustls = { version = "0.20", features = [ "dangerous_configuration" ] }
+tokio-rustls = "0.23"
 rcgen = { version = "0.8", features = [ "pem", "x509-parser" ] }
 httparse = "1"
 serde_json = "1"

@@ -370,7 +370,7 @@ async fn tokio_main(
 }
 
 fn spawn_accept(
-    mut listener: TcpListener,
+    listener: TcpListener,
     options: Arc<ConnectionOptions>,
     ui_tx: Sender<session::events::SessionEvent>,
 )
