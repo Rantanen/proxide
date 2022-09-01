@@ -26,16 +26,16 @@ jobs:
           proxide_version=${ref_no_tag#refs/heads/release-test-}
 
           echo "Final: $proxide_version"
-          echo "::set-env name=PROXIDE_VERSION::${proxide_version}"
-          echo "Version: ${{ env.PROXIDE_VERSION }}"
+          echo "PROXIDE_VERSION=${proxide_version}" >> $GITHUB_ENV
+          echo "Version: ${proxide_version}"
 
 
           if [[ $GITHUB_REF == *"release-test"* ]]; then
             echo "Release test"
-            echo "::set-env name=REAL_RELEASE::true"
+            echo "REAL_RELEASE=false" >> $GITHUB_ENV
           else
             echo "Normal release"
-            echo "::set-env name=REAL_RELEASE::true"
+            echo "REAL_RELEASE=true" >> $GITHUB_ENV
           fi
 
 
@@ -100,9 +100,9 @@ jobs:
         shell: bash
         run: |
           release_upload_url="$(cat artifacts/release-upload-url)"
-          echo "::set-env name=RELEASE_UPLOAD_URL::$release_upload_url"
+          echo "RELEASE_UPLOAD_URL=$release_upload_url" >> $GITHUB_ENV
           release_version="$(cat artifacts/release-version)"
-          echo "::set-env name=RELEASE_VERSION::$release_version"
+          echo "RELEASE_VERSION=$release_version" >> $GITHUB_ENV
           echo "Release upload url: $release_upload_url"
           echo "Release version: $release_version"
 
@@ -138,11 +138,11 @@ jobs:
           if [ "$RUNNER_OS" == "Windows" ]; then
             cp target/release/proxide.exe $target
             7z a "$asset_name.zip" $target
-            echo "::set-env name=ASSET::$asset_name.zip"
+            echo "ASSET=$asset_name.zip" >> $GITHUB_ENV
           else
             cp target/release/proxide $target
             tar czf "$asset_name.tar.gz" $target
-            echo "::set-env name=ASSET::$asset_name.tar.gz"
+            echo "ASSET=$asset_name.tar.gz" >> $GITHUB_ENV
           fi
 
       - name: Upload release
@@ -174,7 +174,7 @@ jobs:
         run: |
           real_release="$(cat artifacts/real-release)"
           echo "Real release: $real_release"
-          echo "::set-env name=REAL_RELEASE::$real_release"
+          echo "REAL_RELEASE=$real_release" >> $GITHUB_ENV
 
       - name: Checkout
         uses: actions/checkout@v2
