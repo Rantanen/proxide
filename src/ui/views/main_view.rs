@@ -100,7 +100,7 @@ impl<B: Backend> View<B> for MainView
         }
     }
 
-    fn on_input(&mut self, ctx: &UiContext, e: CTEvent, size: Rect) -> Option<HandleResult<B>>
+    fn on_input(&mut self, ctx: &UiContext, e: &CTEvent, size: Rect) -> Option<HandleResult<B>>
     {
         if self.filter_pane.is_some() && self.filter_pane_active {
             let filter = &mut self.requests_state.get_filter_mut(&ctx.data.requests);
@@ -150,7 +150,7 @@ impl MainView
     fn do_filter_input<B: Backend>(
         &mut self,
         ctx: &UiContext,
-        e: CTEvent,
+        e: &CTEvent,
     ) -> Option<HandleResult<B>>
     {
         // Handle whatever is on the right side first.
@@ -177,7 +177,7 @@ impl MainView
     fn do_details_input<B: Backend>(
         &mut self,
         ctx: &UiContext,
-        e: CTEvent,
+        e: &CTEvent,
     ) -> Option<HandleResult<B>>
     {
         self.requests_state
@@ -185,7 +185,7 @@ impl MainView
             .and_then(|req| self.details_view.on_input(req, e))
     }
 
-    fn do_self_input<B: Backend>(&mut self, ctx: &UiContext, e: CTEvent)
+    fn do_self_input<B: Backend>(&mut self, ctx: &UiContext, e: &CTEvent)
         -> Option<HandleResult<B>>
     {
         match e {

@@ -1,6 +1,6 @@
 use http::header::{HeaderName, HeaderValue};
 use snafu::Snafu;
-use tui::widgets::Text;
+use tui::text::{Span, Spans, Text};
 
 use crate::session::{MessageData, RequestData};
 
@@ -86,7 +86,7 @@ pub trait DecoderFactory
 pub trait Decoder
 {
     fn name(&self) -> &'static str;
-    fn decode(&self, msg: &MessageData) -> Vec<Text>;
+    fn decode(&self, msg: &MessageData) -> Text;
     fn index(&self, msg: &MessageData) -> Vec<String>;
 }
 
@@ -98,13 +98,13 @@ impl Decoder for HeaderDecoder
         "headers"
     }
 
-    fn decode(&self, msg: &MessageData) -> Vec<Text>
+    fn decode(&self, msg: &MessageData) -> Text
     {
-        self.process(
+        Text::from(Spans::from(self.process(
             msg,
-            |s| Some(Text::raw(s)),
-            |k, v| Text::raw(format!(" - {}: {:?}\n", k, v)),
-        )
+            |s| Some(Span::raw(s)),
+            |k, v| Span::raw(format!(" - {}: {:?}\n", k, v)),
+        )))
     }
 
     fn index(&self, msg: &MessageData) -> Vec<String>

@@ -1,4 +1,4 @@
-use crossterm::event::{Event as CrosstermEvent, KeyCode, KeyModifiers};
+use crossterm::event::{Event as CTEvent, KeyCode, KeyModifiers};
 use tui::backend::Backend;
 
 use crate::ui::state::HandleResult;
@@ -24,10 +24,10 @@ impl<B: Backend> CommandState<B>
         self.display_cursor
     }
 
-    pub fn on_input(&mut self, ctx: &mut UiContext, e: CrosstermEvent) -> Option<HandleResult<B>>
+    pub fn on_input(&mut self, ctx: &mut UiContext, e: &CTEvent) -> Option<HandleResult<B>>
     {
         match e {
-            CrosstermEvent::Key(key) => match key.code {
+            CTEvent::Key(key) => match key.code {
                 KeyCode::Esc => return Some(HandleResult::ExitCommand(None)),
                 KeyCode::Char('c') if key.modifiers == KeyModifiers::CONTROL => {
                     return Some(HandleResult::ExitCommand(None))

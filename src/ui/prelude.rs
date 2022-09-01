@@ -23,7 +23,7 @@ pub fn create_control_block(title: &str, is_active: bool) -> Block
     match is_active {
         true => b
             .border_type(BorderType::Double)
-            .border_style(Style::default().modifier(Modifier::BOLD)),
+            .border_style(Style::default().add_modifier(Modifier::BOLD)),
         false => b,
     }
 }

@@ -24,9 +24,9 @@ impl Decoder for RawDecoder
         "raw"
     }
 
-    fn decode(&self, msg: &MessageData) -> Vec<Text>
+    fn decode(&self, msg: &MessageData) -> Text
     {
-        vec![Text::raw(format!("{:?}", msg.content))]
+        Text::raw(format!("{:?}", msg.content))
     }
 
     fn index(&self, _msg: &MessageData) -> Vec<String>

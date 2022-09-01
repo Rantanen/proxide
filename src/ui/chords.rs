@@ -23,7 +23,7 @@ impl ChordState
         }
     }
 
-    pub fn handle(&mut self, e: CTEvent) -> ChordResult
+    pub fn handle(&mut self, e: &CTEvent) -> ChordResult
     {
         if let CTEvent::Key(key) = e {
             match key.code {

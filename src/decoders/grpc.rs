@@ -3,7 +3,7 @@ use protofish::{context::MessageRef, Context, MessageValue};
 use snafu::ResultExt;
 use std::io::Read;
 use std::rc::Rc;
-use tui::widgets::Text;
+use tui::text::{Span, Spans, Text};
 
 use super::{ConfigurationError, ConfigurationValueError, Decoder, DecoderFactory, Result};
 use crate::session::{MessageData, RequestData, RequestPart};
@@ -152,30 +152,30 @@ impl Decoder for GrpcDecoder
         "grpc"
     }
 
-    fn decode(&self, msg: &MessageData) -> Vec<Text>
+    fn decode(&self, msg: &MessageData) -> Text
     {
         let mut output = vec![];
         if !msg.headers.is_empty() {
-            output.push(Text::raw("Headers\n"));
+            output.push(Span::raw("Headers\n"));
             for (k, v) in &msg.headers {
-                output.push(Text::raw(format!(" - {}: {:?}\n", k, v)));
+                output.push(Span::raw(format!(" - {}: {:?}\n", k, v)));
             }
-            output.push(Text::raw("\n"));
+            output.push(Span::raw("\n"));
         }
 
         for v in &self.get_messages(&msg.content) {
             output.append(&mut v.to_text(&self.ctx, 0));
-            output.push(Text::raw("\n"));
+            output.push(Span::raw("\n"));
         }
 
         if !msg.trailers.is_empty() {
-            output.push(Text::raw("\n"));
-            output.push(Text::raw("\nTrailers\n"));
+            output.push(Span::raw("\n"));
+            output.push(Span::raw("\nTrailers\n"));
             for (k, v) in &msg.headers {
-                output.push(Text::raw(format!(" - {}: {:?}\n", k, v)));
+                output.push(Span::raw(format!(" - {}: {:?}\n", k, v)));
             }
         }
-        output
+        Text::from(Spans::from(output))
     }
 
     fn index(&self, msg: &MessageData) -> Vec<String>
@@ -189,33 +189,33 @@ impl Decoder for GrpcDecoder
 
 trait ToText
 {
-    fn to_text<'a>(&self, ctx: &'a Context, indent: usize) -> Vec<Text<'a>>;
+    fn to_text<'a>(&self, ctx: &'a Context, indent: usize) -> Vec<Span<'a>>;
 
     fn to_index(&self, ctx: &Context) -> Vec<String>;
 }
 
 impl ToText for protofish::decode::MessageValue
 {
-    fn to_text<'a>(&self, ctx: &'a Context, mut indent: usize) -> Vec<Text<'a>>
+    fn to_text<'a>(&self, ctx: &'a Context, mut indent: usize) -> Vec<Span<'a>>
     {
         // Panic here should indicate that msg_ref is for a different context.
         let msg = ctx.resolve_message(self.msg_ref);
 
         let mut v = Vec::with_capacity(2 + 5 * self.fields.len());
-        v.push(Text::raw(format!("{} {{\n", msg.name)));
+        v.push(Span::raw(format!("{} {{\n", msg.name)));
         indent += 1;
         for f in &self.fields {
-            v.push(Text::raw("  ".repeat(indent)));
+            v.push(Span::raw("  ".repeat(indent)));
             v.push(match msg.fields.get(&f.number) {
-                Some(f) => Text::raw(&f.name),
-                None => Text::raw(format!("[#{}]", f.number)),
+                Some(f) => Span::raw(&f.name),
+                None => Span::raw(format!("[#{}]", f.number)),
             });
-            v.push(Text::raw(": "));
+            v.push(Span::raw(": "));
             v.append(&mut f.value.to_text(ctx, indent));
-            v.push(Text::raw("\n"));
+            v.push(Span::raw("\n"));
         }
         indent -= 1;
-        v.push(Text::raw(format!("{}}}", "  ".repeat(indent))));
+        v.push(Span::raw(format!("{}}}", "  ".repeat(indent))));
         v
     }
 
@@ -236,14 +236,14 @@ impl ToText for protofish::decode::MessageValue
 
 impl ToText for protofish::decode::EnumValue
 {
-    fn to_text<'a>(&self, ctx: &'a Context, _indent: usize) -> Vec<Text<'a>>
+    fn to_text<'a>(&self, ctx: &'a Context, _indent: usize) -> Vec<Span<'a>>
     {
         // Panic here should indicate that msg_ref is for a different context.
         let e = ctx.resolve_enum(self.enum_ref);
 
         match e.field_by_value(self.value) {
-            Some(field) => vec![Text::raw(&field.name)],
-            None => vec![Text::raw(self.value.to_string())],
+            Some(field) => vec![Span::raw(&field.name)],
+            None => vec![Span::raw(self.value.to_string())],
         }
     }
 
@@ -260,31 +260,31 @@ impl ToText for protofish::decode::EnumValue
 
 impl ToText for protofish::decode::Value
 {
-    fn to_text<'a>(&self, ctx: &'a Context, indent: usize) -> Vec<Text<'a>>
+    fn to_text<'a>(&self, ctx: &'a Context, indent: usize) -> Vec<Span<'a>>
     {
         vec![match self {
-            Self::Double(v) => Text::raw(format!("{}", v)),
-            Self::Float(v) => Text::raw(format!("{}", v)),
-            Self::Int32(v) => Text::raw(format!("{}", v)),
-            Self::Int64(v) => Text::raw(format!("{}", v)),
-            Self::UInt32(v) => Text::raw(format!("{}", v)),
-            Self::UInt64(v) => Text::raw(format!("{}", v)),
-            Self::SInt32(v) => Text::raw(format!("{}", v)),
-            Self::SInt64(v) => Text::raw(format!("{}", v)),
-            Self::Fixed32(v) => Text::raw(format!("{}", v)),
-            Self::Fixed64(v) => Text::raw(format!("{}", v)),
-            Self::SFixed32(v) => Text::raw(format!("{}", v)),
-            Self::SFixed64(v) => Text::raw(format!("{}", v)),
-            Self::Bool(v) => Text::raw(format!("{}", v)),
-            Self::String(v) => Text::raw(format!("{:?}", v)),
-            Self::Bytes(v) => Text::raw(format!("{:?}", v)),
+            Self::Double(v) => Span::raw(format!("{}", v)),
+            Self::Float(v) => Span::raw(format!("{}", v)),
+            Self::Int32(v) => Span::raw(format!("{}", v)),
+            Self::Int64(v) => Span::raw(format!("{}", v)),
+            Self::UInt32(v) => Span::raw(format!("{}", v)),
+            Self::UInt64(v) => Span::raw(format!("{}", v)),
+            Self::SInt32(v) => Span::raw(format!("{}", v)),
+            Self::SInt64(v) => Span::raw(format!("{}", v)),
+            Self::Fixed32(v) => Span::raw(format!("{}", v)),
+            Self::Fixed64(v) => Span::raw(format!("{}", v)),
+            Self::SFixed32(v) => Span::raw(format!("{}", v)),
+            Self::SFixed64(v) => Span::raw(format!("{}", v)),
+            Self::Bool(v) => Span::raw(format!("{}", v)),
+            Self::String(v) => Span::raw(format!("{:?}", v)),
+            Self::Bytes(v) => Span::raw(format!("{:?}", v)),
             Self::Packed(v) => return v.to_text(ctx, indent),
 
             Self::Enum(v) => return v.to_text(ctx, indent),
             Self::Message(v) => return v.to_text(ctx, indent),
 
-            Self::Unknown(unk) => Text::raw(format!("!! {:?}", unk)),
-            Self::Incomplete(bytes) => Text::raw(format!("Incomplete({:X})", bytes)),
+            Self::Unknown(unk) => Span::raw(format!("!! {:?}", unk)),
+            Self::Incomplete(bytes) => Span::raw(format!("Incomplete({:X})", bytes)),
         }]
     }
 
@@ -319,7 +319,7 @@ impl ToText for protofish::decode::Value
 
 impl ToText for protofish::decode::PackedArray
 {
-    fn to_text<'a>(&self, _ctx: &'a Context, _indent: usize) -> Vec<Text<'a>>
+    fn to_text<'a>(&self, _ctx: &'a Context, _indent: usize) -> Vec<Span<'a>>
     {
         let v: Vec<_> = match self {
             Self::Double(v) => v.iter().map(ToString::to_string).collect(),
@@ -338,12 +338,12 @@ impl ToText for protofish::decode::PackedArray
         };
 
         if v.is_empty() {
-            return vec![Text::raw("[]")];
+            return vec![Span::raw("[]")];
         }
 
-        let mut output = vec![Text::raw("[ ")];
-        output.push(Text::raw(v.join(", ")));
-        output.push(Text::raw(" ]"));
+        let mut output = vec![Span::raw("[ ")];
+        output.push(Span::raw(v.join(", ")));
+        output.push(Span::raw(" ]"));
         output
     }
 
