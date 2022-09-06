@@ -33,7 +33,7 @@ pub fn create_app() -> App<'static>
                         .short('f')
                         .long("format")
                         .takes_value(true)
-                        .possible_values(&["msgpack", "json"]),
+                        .possible_values(["msgpack", "json"]),
                 ),
         )
 }

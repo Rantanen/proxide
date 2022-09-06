@@ -270,12 +270,12 @@ impl ConnectionOptions
 
         let mut cert_data = String::new();
         let mut key_data = String::new();
-        File::open(&cert)
+        File::open(cert)
             .and_then(|mut file| file.read_to_string(&mut cert_data))
             .map_err(|_| Error::ArgumentError {
                 msg: format!("Could not read CA certificate: '{}'", cert),
             })?;
-        File::open(&key)
+        File::open(key)
             .and_then(|mut file| file.read_to_string(&mut key_data))
             .map_err(|_| Error::ArgumentError {
                 msg: format!("Could not read CA private key: '{}'", key),

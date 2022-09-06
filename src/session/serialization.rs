@@ -292,7 +292,7 @@ pub fn open_target_file(
 {
     let mut file: Box<dyn Write> = match filename {
         "-" => Box::new(std::io::stdout()),
-        _ => match std::fs::File::create(&filename) {
+        _ => match std::fs::File::create(filename) {
             Ok(f) => Box::new(f),
             Err(e) => {
                 return Err(SerializationError::IoError {
