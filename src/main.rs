@@ -112,7 +112,7 @@ fn proxide_main() -> Result<(), Error>
         .unwrap();
     }
 
-    let commit = option_env!("GITHUB_REF")
+    let commit = option_env!("GITHUB_SHA")
         .map(|c| &c[..7])
         .unwrap_or("dev build");
     let version = format!("{} ({})", env!("CARGO_PKG_VERSION"), commit);
