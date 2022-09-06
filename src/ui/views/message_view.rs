@@ -160,7 +160,10 @@ impl<B: Backend> View<B> for MessageView
 
     fn help_text(&self, _session: &UiContext, _size: Rect) -> String
     {
-        "Up/Down, j/k, PgUp/PgDn: Scroll; Tab: Switch Request/Response; F12: Export to file"
-            .to_string()
+        format!(
+            "{}\n{}",
+            "[Up/Down, j/k, PgUp/PgDn]: Scroll; [Tab]: Switch Request/Response; [F12]: Export to file",
+            "[q/e]: Toggle request/response, [Esc]: Back to main view"
+        )
     }
 }
