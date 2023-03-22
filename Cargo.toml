@@ -28,7 +28,7 @@ clap = "3"
 protofish = { version = "0.2" }
 serde = { version = "1", features = ["derive"] }
 http-serde = "1"
-rmp-serde = "0.14"
+rmp-serde = "1.1"
 lazy_static = "1"
 ctrlc = "3"
 rustls = { version = "0.20", features = [ "dangerous_configuration" ] }
