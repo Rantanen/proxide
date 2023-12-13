@@ -40,14 +40,16 @@ jobs:
           protoc --version 
 
       - name: Build
-        run: cargo build
+        run: |
+          cargo build
+          cargo build --manifest-path ./test/rust_grpc/Cargo.toml
 
       - name: Tests
         shell: bash
         run: |
           cd test
-          ./test_script.sh
-
+          cargo test --manifest-path ./rust_grpc/Cargo.toml
+          ./test_script.sh          
 
   style:
     name: Fmt & Clippy
