@@ -19,7 +19,7 @@ impl Default for MainView
     fn default() -> Self
     {
         Self {
-            details_view: DetailsPane::default(),
+            details_view: DetailsPane {},
             filter_pane: None,
             filter_pane_active: false,
             requests_state: TableView::<EncodedRequest>::new("Requests")

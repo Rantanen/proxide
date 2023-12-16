@@ -64,7 +64,7 @@ pub fn initialize(matches: &ArgMatches) -> Result<Option<Box<dyn DecoderFactory>
 
     let content_ref: Vec<_> = content.iter().map(|s| s.as_str()).collect();
 
-    let context = Context::parse(&content_ref)
+    let context = Context::parse(content_ref)
         .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send>)
         .context(ConfigurationError { option: "grpc" })?;
 

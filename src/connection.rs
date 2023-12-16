@@ -300,7 +300,7 @@ where
                     log::error!("Error reading data: {}", e);
                     break;
                 }
-                Ok(c) if c == 0 => break,
+                Ok(0) => break,
                 Ok(c) => c,
             };
             if let Err(e) = write.write(&b[..count]).await {

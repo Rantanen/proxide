@@ -81,7 +81,7 @@ impl<B: Backend> ProxideUi<B>
                 data: session,
                 size,
             },
-            ui_stack: vec![Box::new(views::MainView::default())],
+            ui_stack: vec![Box::<views::MainView>::default()],
             toasts: vec![],
             input_command: None,
         }
