@@ -30,10 +30,14 @@ jobs:
           profile: minimal
           override: true
 
+      - name: Install Protoc
+        uses: arduino/setup-protoc@v2
+
       - name: Environment
         run: |
           cargo --version
           rustc --version
+          protoc --version 
 
       - name: Build
         run: cargo build
@@ -58,11 +62,17 @@ jobs:
           profile: minimal
           override: true
           components: rustfmt, clippy
+
+      - name: Install Protoc
+        uses: arduino/setup-protoc@v2
+
       - name: Environment
         run: |
           cargo --version
           cargo fmt -- --version
           cargo clippy -- --version
+          protoc --version
+
       - name: Run rustfmt
         run: |
           cargo fmt --all -- --check
