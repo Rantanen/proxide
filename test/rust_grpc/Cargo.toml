@@ -19,9 +19,15 @@ path="src/server.rs"
 [dependencies]
 tonic = "0.10.2"
 prost = "0.12.3"
+prost-types = "0.12.3"
 tokio = {  version = "1.35.0", features = ["macros", "rt-multi-thread"] }
 tokio-shutdown = "0.1.4"
 clap = {  version= "4.4.11", features = ["derive"] }
+portpicker = "0.1.1"
+atomic-counter = "1.0.1"
 
 [build-dependencies]
 tonic-build = { version = "0.10.2", features = ["prost"] }
+
+[profile.release]
+debug = true
