@@ -561,7 +561,7 @@ impl<T> FilterGroupState<T>
 
     pub fn last_key(&self) -> Option<&str>
     {
-        self.filters.keys().rev().next().map(|s| s.as_str())
+        self.filters.keys().next_back().map(|s| s.as_str())
     }
 
     pub fn get(&self, f: &str) -> Option<&SingleFilterState<T>>
