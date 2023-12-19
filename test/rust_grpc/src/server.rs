@@ -81,6 +81,12 @@ impl GrpcServer
         Ok(server)
     }
 
+    /// Gets the server's address.
+    pub fn address(&self) -> &SocketAddr
+    {
+        &self.address
+    }
+
     /// Gets the HTTP address of the server.
     pub fn http(&self) -> String
     {
@@ -250,6 +256,7 @@ impl TestService for LocalTestService
         }))
     }
 
+    /// Waits and blocks until the server has received at least one send_message call.
     async fn wait_for_first_message(
         &self,
         _request: Request<WaitForFirstMessageRequest>,

@@ -47,6 +47,7 @@ jobs:
       - name: Tests
         shell: bash
         run: |
+          cargo test
           cd test
           cargo test --manifest-path ./rust_grpc/Cargo.toml
           ./test_script.sh          
