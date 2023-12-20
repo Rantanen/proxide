@@ -2,15 +2,18 @@ use atomic_counter::AtomicCounter;
 use clap::Parser;
 use rust_grpc_private::test_service_server::{TestService, TestServiceServer};
 use rust_grpc_private::{
-    DiagnosticsRequest, DiagnosticsResponse, PingRequest, PingResponse, SendMessageRequest,
-    SendMessageResponse, WaitForFirstMessageRequest, WaitForFirstMessageResponse,
+    ClientProcess, DiagnosticsRequest, DiagnosticsResponse, PingRequest, PingResponse,
+    SendMessageRequest, SendMessageResponse, WaitForFirstMessageRequest,
+    WaitForFirstMessageResponse,
 };
 use std::net::SocketAddr;
+use std::str::FromStr;
 use std::thread;
 use std::time::Instant;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::watch;
 use tokio::sync::watch::{Receiver, Sender};
+use tonic::metadata::{Ascii, MetadataValue};
 use tonic::transport::Server;
 use tonic::{Request, Response, Status};
 
@@ -167,6 +170,10 @@ struct LocalTestService
 
     /// The number of send_message calls the service has received.
     send_message_calls_served: atomic_counter::RelaxedCounter,
+
+    /// Collection of client processes and threads as reported with
+    /// the proxide-client-process-id and proxide-client-thread-id headers
+    clients: crossbeam_skiplist::SkipMap<u32, crossbeam_skiplist::SkipSet<u64>>,
 }
 
 impl LocalTestService
@@ -191,6 +198,7 @@ impl LocalTestService
             message_received_check: rx,
             started: Instant::now(),
             send_message_calls_served: atomic_counter::RelaxedCounter::new(0),
+            clients: crossbeam_skiplist::SkipMap::new(),
         };
         #[cfg(not(test))]
         println!("Test server listening on {}", address);
@@ -221,7 +229,7 @@ impl TestService for LocalTestService
 {
     async fn send_message(
         &self,
-        _request: Request<SendMessageRequest>,
+        request: Request<SendMessageRequest>,
     ) -> Result<Response<SendMessageResponse>, Status>
     {
         // Avoid unnecessary notifications to reduce CPU <-> CPU communication.
@@ -236,6 +244,19 @@ impl TestService for LocalTestService
                 }
             });
         self.send_message_calls_served.inc();
+
+        // Collect the client info.
+        let process_id = request.metadata().get("proxide-client-process-id");
+        let thread_id = request.metadata().get("proxide-client-thread-id");
+        if process_id.is_some() && thread_id.is_some() {
+            let threads = self.clients.get_or_insert(
+                number_from_client(process_id.unwrap())?,
+                crossbeam_skiplist::SkipSet::new(),
+            );
+            threads
+                .value()
+                .insert(number_from_client(thread_id.unwrap())?);
+        }
         Ok(Response::new(SendMessageResponse {}))
     }
 
@@ -250,9 +271,19 @@ impl TestService for LocalTestService
             Err(_) => return Err(Status::internal("Calculating server uptime failed.")),
         };
 
+        let clients = self
+            .clients
+            .iter()
+            .map(|c| ClientProcess {
+                id: *c.key(),
+                threads: c.value().iter().map(|e| *e.value()).collect(),
+            })
+            .collect();
+
         Ok(Response::new(DiagnosticsResponse {
             uptime: Some(duration),
             send_message_calls: self.send_message_calls_served.get() as u64,
+            clients,
         }))
     }
 
@@ -284,4 +315,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>
     LocalTestService::spawn(args.address.parse()?)?;
     tokio::signal::ctrl_c().await?;
     Ok(())
+}
+
+fn number_from_client<N>(value: &MetadataValue<Ascii>) -> Result<N, Status>
+where
+    N: FromStr,
+{
+    let value = match value.to_str() {
+        Ok(v) => v,
+        Err(_) => return Err(Status::invalid_argument("Header was not a string.")),
+    };
+    match N::from_str(value) {
+        Ok(numbert) => Ok(numbert),
+        Err(_) => Err(Status::invalid_argument("Expected number")),
+    }
 }
