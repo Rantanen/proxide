@@ -7,7 +7,7 @@ mod message_view;
 pub use message_view::MessageView;
 
 mod callstack_view;
-pub use callstack_view::{CallstackView, ClientThreadId};
+pub use callstack_view::CallstackView;
 
 pub trait View<B: Backend>
 {

@@ -14,6 +14,7 @@ pub enum SessionEvent
     MessageDone(MessageDoneEvent),
     RequestDone(RequestDoneEvent),
     ConnectionDone(ConnectionDoneEvent),
+    ClientCallstackProcessed(ClientCallstackProcessedEvent),
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -84,6 +85,13 @@ pub struct ConnectionDoneEvent
     pub timestamp: SystemTime,
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+pub struct ClientCallstackProcessedEvent
+{
+    pub uuid: Uuid,
+    pub callstack: ClientCallstack,
+}
+
 pub enum SessionChange
 {
     NewConnection
@@ -110,6 +118,10 @@ pub enum SessionChange
     {
         connection: Uuid
     },
+    Callstack
+    {
+        request: Uuid
+    },
 }
 
 impl Session
@@ -124,6 +136,7 @@ impl Session
             SessionEvent::MessageDone(e) => self.on_message_done(e),
             SessionEvent::RequestDone(e) => self.on_request_done(e),
             SessionEvent::ConnectionDone(e) => self.on_connection_done(e),
+            SessionEvent::ClientCallstackProcessed(e) => self.on_client_callstack_processed(e),
         }
     }
 
@@ -154,6 +167,7 @@ impl Session
                     status: Status::InProgress,
                     start_timestamp: e.timestamp.into(),
                     end_timestamp: None,
+                    client_callstack: None,
                 },
                 request_msg: MessageData::new(RequestPart::Request)
                     .with_headers(e.headers)
@@ -243,6 +257,20 @@ impl Session
             conn.end_timestamp = Some(e.timestamp.into());
             conn.status = e.status;
             vec![SessionChange::Connection { connection: e.uuid }]
+        } else {
+            vec![]
+        }
+    }
+
+    fn on_client_callstack_processed(
+        &mut self,
+        e: ClientCallstackProcessedEvent,
+    ) -> Vec<SessionChange>
+    {
+        let request = self.requests.get_mut_by_uuid(e.uuid);
+        if let Some(request) = request {
+            request.request_data.client_callstack = Some(e.callstack);
+            vec![SessionChange::Callstack { request: e.uuid }]
         } else {
             vec![]
         }

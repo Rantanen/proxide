@@ -419,6 +419,7 @@ mod test
     use log::SetLoggerError;
     use serial_test::serial;
     use std::io::{ErrorKind, Write};
+    use std::ops::Add;
     use std::str::FromStr;
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
@@ -426,6 +427,7 @@ mod test
     use tokio::sync::broadcast::Receiver;
     use tokio::sync::mpsc::UnboundedReceiver;
     use tokio::sync::oneshot;
+    use tokio::time::Instant;
 
     use crate::session::events::SessionEvent;
     use crate::ConnectionOptions;
@@ -531,6 +533,68 @@ mod test
             .await
             .expect("Waiting for proxide to stop failed.")
             .expect("Waiting for proxide to stop failed.");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn proxide_receives_client_callstack_ui_message()
+    {
+        // Logging must be enabled to detect errors inside proxide.
+        // Failure to monitor logs may cause the test to hang as errors that stop processing get silently ignored.
+        let mut error_monitor = get_error_monitor().expect("Acquiring error monitor failed.");
+
+        // Server
+        let server = GrpcServer::start()
+            .await
+            .expect("Starting test server failed.");
+
+        // Proxide
+        let options = get_proxide_options(&server);
+        let (abort_tx, abort_rx) = tokio::sync::oneshot::channel::<()>();
+        let (ui_tx, ui_rx_std) = std::sync::mpsc::channel();
+        let proxide_port = u16::from_str(&options.listen_port.to_string()).unwrap();
+        let proxide = tokio::spawn(crate::launch_proxide(options, abort_rx, ui_tx));
+
+        // Message generator and tester.
+        let tester = grpc_tester::GrpcTester::with_proxide(
+            server,
+            proxide_port,
+            grpc_tester::Args {
+                period: std::time::Duration::from_secs(0),
+                tasks: 1,
+            },
+        )
+        .await
+        .expect("Starting tester failed.");
+        let mut message_rx = async_from_sync(ui_rx_std);
+
+        // UI channel should be constantly receiving client callstack events.
+        // The generator includes the process id and the thread id in the messages it sends.
+        let mut client_callstack_received = false;
+        let timeout_at = Instant::now().add(Duration::from_secs(30));
+        while let Some(message) = tokio::select! {
+            result = message_rx.recv() => result,
+            _t = tokio::time::sleep( Duration::from_secs( 30 ) ) => panic!( "Timeout" ),
+            error = error_monitor.recv() => panic!( "{:?}", error ),
+        } {
+            if let SessionEvent::ClientCallstackProcessed(..) = message {
+                client_callstack_received = true;
+                break;
+            } else if Instant::now() > timeout_at {
+                panic!("Timeout")
+            }
+        }
+
+        // Ensure the ui channel was not closed prematurely.
+        assert!(client_callstack_received);
+
+        let mut server = tester.stop_generator().expect("Stopping generator failed.");
+        abort_tx.send(()).expect("Stopping proxide failed.");
+        proxide
+            .await
+            .expect("Waiting for proxide to stop failed.")
+            .expect("Waiting for proxide to stop failed.");
+        server.stop().expect("Stopping server failed");
     }
 
     /// Gets options for launching proxide.

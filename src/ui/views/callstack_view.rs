@@ -1,22 +1,9 @@
 use super::prelude::*;
+use crate::session::ClientCallstack;
 use crossterm::event::KeyCode;
-use http::HeaderValue;
 use std::convert::TryFrom;
 use tui::widgets::{Paragraph, Wrap};
 use uuid::Uuid;
-
-use crate::session::MessageData;
-
-/// When available, identifies the thread in the calling or client process.
-/// The client should reports its process id with the proxide-client-process-id" header and
-/// the thread id with the "proxide-client-thread-id" header.
-/// This enables the proxide proxy to capture client's callstack when it is making the call if the proxide
-/// and the client are running on the same host.
-pub struct ClientThreadId
-{
-    process_id: u32,
-    thread_id: i64,
-}
 
 pub struct CallstackView
 {
@@ -35,17 +22,25 @@ impl<B: Backend> View<B> for CallstackView
             None => return,
         };
 
-        let client_thread = match ClientThreadId::try_from(&request.request_msg) {
+        let client_thread = match crate::connection::ClientThreadId::try_from(&request.request_msg)
+        {
             Ok(thread_id) => thread_id,
             Err(_) => return,
         };
 
         let title = format!(
             "Client call[s]tack, Process: {}, Thread: {}",
-            client_thread.process_id, client_thread.thread_id
+            client_thread.process_id(),
+            client_thread.thread_id()
         );
+        let message = match request.request_data.client_callstack {
+            Some(ClientCallstack::Unsupported) => {
+                "Callstack unavailable:\n* Unsupported operating system."
+            }
+            None => ".. (Pending)",
+        };
         let block = create_block(&title);
-        let request_data = Paragraph::new("Unimplemented.")
+        let request_data = Paragraph::new(message)
             .block(block)
             .wrap(Wrap { trim: false })
             .scroll((self.offset, 0));
@@ -79,6 +74,7 @@ impl<B: Backend> View<B> for CallstackView
             SessionChange::Request { .. } => false,
             SessionChange::NewMessage { .. } => false,
             SessionChange::Message { .. } => false,
+            SessionChange::Callstack { request } => *request == self.request,
         }
     }
 
@@ -88,38 +84,5 @@ impl<B: Backend> View<B> for CallstackView
             "{}\n{}",
             "[Up/Down, j/k, PgUp/PgDn]: Scroll; [F12]: Export to file", "[Esc]: Back to main view"
         )
-    }
-}
-
-impl TryFrom<&MessageData> for ClientThreadId
-{
-    type Error = ();
-
-    fn try_from(value: &MessageData) -> Result<Self, Self::Error>
-    {
-        let process_id: Option<u32> =
-            number_or_none(&value.headers.get("proxide-client-process-id"));
-        let thread_id: Option<i64> = number_or_none(&value.headers.get("proxide-client-thread-id"));
-        match (process_id, thread_id) {
-            (Some(process_id), Some(thread_id)) => Ok(ClientThreadId {
-                process_id,
-                thread_id,
-            }),
-            _ => Err(()),
-        }
-    }
-}
-
-fn number_or_none<N>(header: &Option<&HeaderValue>) -> Option<N>
-where
-    N: std::str::FromStr,
-{
-    if let Some(value) = header {
-        value
-            .to_str()
-            .map(|s| N::from_str(s).map(|n| Some(n)).unwrap_or(None))
-            .unwrap_or(None)
-    } else {
-        None
     }
 }

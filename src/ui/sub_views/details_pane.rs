@@ -7,7 +7,7 @@ use uuid::Uuid;
 use crate::ui::prelude::*;
 
 use crate::session::{EncodedRequest, RequestPart};
-use crate::ui::views::{CallstackView, ClientThreadId, MessageView};
+use crate::ui::views::{CallstackView, MessageView};
 
 #[derive(Clone, Default)]
 pub struct DetailsPane;
@@ -63,15 +63,16 @@ impl DetailsPane
         c.x -= 1;
         c.width += 2;
         c.height += 1;
-        let vertical_chunks: Vec<Rect> = if ClientThreadId::try_from(&request.request_msg).is_ok() {
-            Layout::default()
-                .direction(Direction::Vertical)
-                .margin(0)
-                .constraints([Constraint::Percentage(80), Constraint::Percentage(20)].as_ref())
-                .split(block.inner(c))
-        } else {
-            Vec::from([block.inner(c)])
-        };
+        let vertical_chunks: Vec<Rect> =
+            if crate::connection::ClientThreadId::try_from(&request.request_msg).is_ok() {
+                Layout::default()
+                    .direction(Direction::Vertical)
+                    .margin(0)
+                    .constraints([Constraint::Percentage(80), Constraint::Percentage(20)].as_ref())
+                    .split(block.inner(c))
+            } else {
+                Vec::from([block.inner(c)])
+            };
         let req_resp_chunks = Layout::default()
             .direction(Direction::Horizontal)
             .margin(0)
@@ -153,7 +154,7 @@ impl DetailsPane
     fn create_callstack_view<B: Backend>(&mut self, req: &EncodedRequest)
         -> Option<HandleResult<B>>
     {
-        if ClientThreadId::try_from(&req.request_msg).is_ok() {
+        if crate::connection::ClientThreadId::try_from(&req.request_msg).is_ok() {
             Some(HandleResult::PushView(Box::new(CallstackView {
                 request: req.request_data.uuid,
                 offset: 0,

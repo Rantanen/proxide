@@ -8,10 +8,14 @@ use h2::{
 use http::{HeaderMap, Request, Response};
 use log::error;
 use snafu::ResultExt;
+use std::convert::TryFrom;
 use std::net::SocketAddr;
+use std::pin::Pin;
 use std::sync::mpsc::Sender;
+use std::task::{Context, Poll};
 use std::time::SystemTime;
 use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::task::{JoinHandle, JoinSet};
 use uuid::Uuid;
 
 use super::*;
@@ -141,6 +145,12 @@ pub struct ProxyRequest
     client_response: SendResponse<Bytes>,
     server_request: SendStream<Bytes>,
     server_response: ResponseFuture,
+    request_processor: ProcessingFuture,
+}
+
+struct ProcessingFuture
+{
+    inner: JoinHandle<()>,
 }
 
 impl ProxyRequest
@@ -191,6 +201,10 @@ impl ProxyRequest
         }))
         .unwrap();
 
+        // Request processor supports asynchronous message processing while the proxide is busy proxying data between
+        // the client and the server.
+        let request_processor = ProcessingFuture::spawn(uuid, &client_head, ui);
+
         let server_request = Request::from_parts(client_head, ());
 
         // Set up a server request.
@@ -208,6 +222,7 @@ impl ProxyRequest
             client_response,
             server_request,
             server_response,
+            request_processor,
         })
     }
 
@@ -265,6 +280,7 @@ impl ProxyRequest
         let mut client_response = self.client_response;
         let server_response = self.server_response;
         let connection_uuid = self.connection_uuid;
+        let request_processor = self.request_processor;
         let ui_temp = ui.clone();
         let response_future = async move {
             let ui = ui_temp;
@@ -292,6 +308,11 @@ impl ProxyRequest
                 .context(ClientError {
                     scenario: "sending response",
                 })?;
+
+            // Ensure the request processor has finished before we send the response to the client.
+            // Callstack capturing process inside the request processor may capture incorrect data if
+            // the client is given the final answer from the server as it no longer has to wait for the response.
+            request_processor.await;
 
             // The server might have sent all the details in the headers, at which point there is
             // no body present. Check for this scenario here.
@@ -438,5 +459,66 @@ fn is_fatal_error<S>(r: &Result<S, Error>) -> bool
             },
             _ => true,
         },
+    }
+}
+
+impl ProcessingFuture
+{
+    fn spawn(uuid: Uuid, client_head: &http::request::Parts, ui: &Sender<SessionEvent>) -> Self
+    {
+        let mut tasks: JoinSet<std::result::Result<(), Box<dyn std::error::Error + Send + Sync>>> =
+            JoinSet::new();
+
+        // Task which attempts to capture client's callstack.
+        if let Ok(thread_id) = crate::connection::ClientThreadId::try_from(&client_head.headers) {
+            let ui_clone = ui.clone();
+            tasks.spawn(ProcessingFuture::capture_client_callstack(
+                uuid, thread_id, ui_clone,
+            ));
+        }
+
+        Self {
+            inner: tokio::spawn(async move {
+                while let Some(result) = tasks.join_next().await {
+                    match result {
+                        Ok(_) => {}
+                        Err(e) => {
+                            // TODO: Send the error to UI.
+                            eprintln!("{}", e);
+                            error!("{}", e);
+                        }
+                    }
+                }
+            }),
+        }
+    }
+
+    async fn capture_client_callstack(
+        uuid: Uuid,
+        _client_thread_id: ClientThreadId,
+        ui: Sender<SessionEvent>,
+    ) -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>>
+    {
+        // TODO: Try to capture the callstack
+        ui.send(SessionEvent::ClientCallstackProcessed(
+            ClientCallstackProcessedEvent {
+                uuid,
+                callstack: ClientCallstack::Unsupported,
+            },
+        ))?;
+        Ok(())
+    }
+}
+
+impl Future for ProcessingFuture
+{
+    type Output = ();
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output>
+    {
+        match Pin::new(&mut self.inner).poll(cx) {
+            Poll::Ready(_) => Poll::Ready(()),
+            Poll::Pending => Poll::Pending,
+        }
     }
 }

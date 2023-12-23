@@ -92,7 +92,7 @@ pub fn main(
     state.draw(&mut terminal).context(IoError {})?;
     let mut redraw_pending = false;
     loop {
-        let e = ui_rx.recv().expect( "Receiving UI events failed.");
+        let e = ui_rx.recv().expect("Receiving UI events failed.");
         if let UiEvent::Redraw = e {
             redraw_pending = false;
             state.draw(&mut terminal).context(IoError {})?;
