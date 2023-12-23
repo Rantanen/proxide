@@ -1,0 +1,43 @@
+[package]
+name = "grpc-tester"
+version = "0.1.0" # Keep the version near the top for CI purposes (release.yml)
+authors = ["Juha Lepola <juha.lepola@gmail.com>"]
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+[lib]
+name="grpc_tester"
+
+[[bin]]
+name="grpc-generator"
+path= "src/generator.rs"
+
+[[bin]]
+name="grpc-server"
+path="src/server.rs"
+
+[dependencies]
+tonic = "0.10.2"
+prost = "0.12.3"
+prost-types = "0.12.3"
+tokio = {  version = "1.35.0", features = ["macros", "rt-multi-thread"] }
+tokio-shutdown = "0.1.4"
+clap = {  version= "4.4.11", features = ["derive"] }
+portpicker = "0.1.1"
+atomic-counter = "1.0.1"
+os-id = "3.0.1"
+crossbeam-skiplist = "0.1.1"
+
+[dependencies.windows]
+version = "0.52.0"
+features = [
+    "Win32_Foundation",
+    "Win32_System_Threading",
+]
+
+
+[build-dependencies]
+tonic-build = { version = "0.10.2", features = ["prost"] }
+
+[profile.release]
+debug = true

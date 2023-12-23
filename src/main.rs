@@ -332,6 +332,16 @@ async fn tokio_main(
     ui_tx: Sender<session::events::SessionEvent>,
 ) -> Result<(), Error>
 {
+    launch_proxide(options, abort_rx, ui_tx).await?;
+    Ok(())
+}
+
+async fn launch_proxide(
+    options: Arc<ConnectionOptions>,
+    abort_rx: oneshot::Receiver<()>,
+    ui_tx: Sender<session::events::SessionEvent>,
+) -> Result<(), Error>
+{
     // We'll want to listen for both IPv4 and IPv6. These days 'localhost' will first resolve to the
     // IPv6 address if that is available. If we did not bind to it, all the connections would first
     // need to timeout there before the Ipv4 would be attempted as a fallback.
@@ -398,5 +408,234 @@ fn new_connection(
                 Err(e) => error!("Connection error\n{}", e),
             }
         });
+    }
+}
+
+#[cfg(test)]
+mod test
+{
+    use grpc_tester::server::GrpcServer;
+    use lazy_static::lazy_static;
+    use log::SetLoggerError;
+    use serial_test::serial;
+    use std::io::{ErrorKind, Write};
+    use std::str::FromStr;
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+    use tokio::sync::broadcast::error::TryRecvError;
+    use tokio::sync::broadcast::Receiver;
+    use tokio::sync::mpsc::UnboundedReceiver;
+    use tokio::sync::oneshot;
+
+    use crate::session::events::SessionEvent;
+    use crate::ConnectionOptions;
+
+    lazy_static! {
+
+        // Logging must be enabled to detect errors inside proxide.
+        // Failure to monitor logs may cause the test to hang as errors that stop processing get silently ignored.
+        // It is only possible to initialize one logger => the logger is shared between the tests =>
+        // the tests are execute sequentially.
+        //
+        // Call get_error_monitor to access the monitor inside a test.
+        // It drains the monitor from messages ensuring it has room for errors.
+        static ref ERROR_MONITOR: Mutex<Receiver<String>> = create_error_monitor().expect( "Initializing error monitoring failed.");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn proxide_captures_messages()
+    {
+        // Logging must be enabled to detect errors inside proxide.
+        // Failure to monitor logs may cause the test to hang as errors that stop processing get silently ignored.
+        let mut error_monitor = get_error_monitor().expect("Acquiring error monitor failed.");
+
+        // Server
+        let server = GrpcServer::start()
+            .await
+            .expect("Starting test server failed.");
+
+        // Proxide
+        let options = get_proxide_options(&server);
+        let (abort_tx, abort_rx) = tokio::sync::oneshot::channel::<()>();
+        let (ui_tx, ui_rx_std) = std::sync::mpsc::channel();
+        let proxide_port = u16::from_str(&options.listen_port.to_string()).unwrap();
+        let proxide = tokio::spawn(crate::launch_proxide(options, abort_rx, ui_tx));
+
+        // Message generator and tester.
+        let tester = grpc_tester::GrpcTester::with_proxide(
+            server,
+            proxide_port,
+            grpc_tester::Args {
+                period: std::time::Duration::from_secs(0),
+                tasks: 1,
+            },
+        )
+        .await
+        .expect("Starting tester failed.");
+        let mut message_rx = async_from_sync(ui_rx_std);
+        tokio::select! {
+            _result = message_rx.recv() => {},
+            result = error_monitor.recv() => panic!( "{:?}", result ),
+        }
+        let mut server = tester.stop_generator().expect("Stopping generator failed.");
+        abort_tx.send(()).expect("Stopping proxide failed.");
+        proxide
+            .await
+            .expect("Waiting for proxide to stop failed.")
+            .expect("Waiting for proxide to stop failed.");
+        server.stop().expect("Stopping server failed");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn error_monitor_catches_errors()
+    {
+        // Logging must be enabled to detect errors inside proxide.
+        // Failure to monitor logs may cause the test to hang as errors that stop processing get silently ignored.
+        let mut error_monitor = get_error_monitor().expect("Acquiring error monitor failed.");
+
+        // Proxide
+        let options = ConnectionOptions {
+            ca: None,
+            allow_remote: false,
+            listen_port: portpicker::pick_unused_port()
+                .expect("Getting free port for proxide failed.")
+                .to_string(),
+            target_server: Some("Invalid address".to_string()),
+            proxy: None,
+        };
+        let (abort_tx, abort_rx) = oneshot::channel::<()>();
+        let (ui_tx, _) = std::sync::mpsc::channel();
+        let proxide_port = u16::from_str(&options.listen_port.to_string()).unwrap();
+        let proxide = tokio::spawn(crate::launch_proxide(Arc::new(options), abort_rx, ui_tx));
+
+        // Request proxide to connect to the dummy server. This triggers the expected failure.
+        let mut generator =
+            grpc_tester::generator::GrpcGenerator::start(grpc_tester::generator::Args {
+                address: format!("http://[::1]:{}", proxide_port),
+                period: Duration::from_secs(0),
+                tasks: 1,
+            })
+            .await
+            .expect("Starting the genrator failed.");
+
+        // The invalid address given as the target server's address should trigger an error within the proxide proxy.
+        tokio::select! {
+            _result = tokio::time::sleep( Duration::from_secs(30)) => panic!("Error monitor did not receive errors."),
+            _result = error_monitor.recv() => {},
+        }
+        abort_tx.send(()).expect("Stopping proxide failed.");
+        generator.stop().expect("Stopping the generator failed.");
+        proxide
+            .await
+            .expect("Waiting for proxide to stop failed.")
+            .expect("Waiting for proxide to stop failed.");
+    }
+
+    /// Gets options for launching proxide.
+    fn get_proxide_options(server: &GrpcServer) -> Arc<ConnectionOptions>
+    {
+        let options = ConnectionOptions {
+            ca: None,
+            allow_remote: false,
+            listen_port: portpicker::pick_unused_port()
+                .expect("Getting free port for proxide failed.")
+                .to_string(),
+            target_server: Some(server.address().to_string()),
+            proxy: None,
+        };
+        Arc::new(options)
+    }
+
+    /// Converts a synchronous channel into an asynchronous channel with a helper thread.
+    fn async_from_sync(
+        sync_received: std::sync::mpsc::Receiver<SessionEvent>,
+    ) -> UnboundedReceiver<SessionEvent>
+    {
+        let (async_tx, async_rx) = tokio::sync::mpsc::unbounded_channel();
+        std::thread::spawn(
+            move || -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+                loop {
+                    async_tx.send(sync_received.recv()?)?;
+                }
+            },
+        );
+        async_rx
+    }
+
+    /// Gets an error monitor for a test.
+    fn get_error_monitor() -> Result<Receiver<String>, Box<dyn std::error::Error>>
+    {
+        // Gets a clean monitor for the tests.
+        // The monitor is drained to guarantee the error monitor channel is empty before the tests.
+        // Re-subscribe would not work as it doesn't remove the existing messages from the channel.
+        let mut monitor = ERROR_MONITOR.lock().unwrap();
+        loop {
+            match monitor.try_recv() {
+                Ok(_) => {}
+                Err(TryRecvError::Empty) => {
+                    break;
+                }
+                Err(e) => return Err(Box::from(e)),
+            }
+        }
+        Ok(monitor.resubscribe())
+    }
+
+    /// Initializes logging for the tests.
+    fn create_error_monitor() -> Result<Mutex<Receiver<String>>, SetLoggerError>
+    {
+        let (log_tx, log_rx) = tokio::sync::broadcast::channel(256);
+        simplelog::WriteLogger::init(
+            simplelog::LevelFilter::Error,
+            simplelog::ConfigBuilder::new().build(),
+            ChannelLogger {
+                target: log_tx,
+                data: Vec::new(),
+            },
+        )?;
+        Ok(Mutex::new(log_rx))
+    }
+
+    /// A logger that sends the log messages into a channel.
+    struct ChannelLogger
+    {
+        /// Target channel for sending log messages.
+        target: tokio::sync::broadcast::Sender<String>,
+
+        /// Data buffer for the error messages.
+        data: Vec<u8>,
+    }
+
+    impl Write for ChannelLogger
+    {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize>
+        {
+            // Split the log at line breaks.
+            if let Some(terminator) = buf.iter().position(|&b| b == 0 || b == 0x0a) {
+                let (current, _) = buf.split_at(terminator);
+                self.data.extend_from_slice(current);
+                let log_entry = String::from_utf8_lossy(&self.data).to_string();
+                self.data.clear();
+                match self.target.send(log_entry) {
+                    Ok(_) => Ok(current.len() + 1),
+                    Err(_) => Err(std::io::Error::from(ErrorKind::BrokenPipe)),
+                }
+            } else {
+                self.data.extend_from_slice(buf);
+                Ok(buf.len())
+            }
+        }
+
+        fn flush(&mut self) -> std::io::Result<()>
+        {
+            let log = String::from_utf8_lossy(self.data.as_slice()).to_string();
+            self.data.clear();
+            match self.target.send(log.to_string()) {
+                Ok(_) => Ok(()),
+                Err(_) => Err(std::io::Error::from(ErrorKind::BrokenPipe)),
+            }
+        }
     }
 }
