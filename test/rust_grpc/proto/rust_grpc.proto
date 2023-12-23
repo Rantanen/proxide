@@ -1,0 +1,85 @@
+// Copyright © 2022 Juha Lepola
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy of
+// this software and associated documentation files (the “Software”),
+// to deal in the Software without restriction, including without limitation
+// the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software,
+// and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+// IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN
+// AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+// OTHER DEALINGS IN THE SOFTWARE.
+
+syntax = "proto3";
+
+package rust_grpc;
+
+
+option java_multiple_files = true;
+option java_package = "io.grpc.examples.rust_grpc";
+option java_outer_classname = "RustGrpcProto";
+
+import "google/protobuf/duration.proto";
+
+/// Test server
+service TestService {
+
+  /// A test message sent from client to the server.
+  rpc SendMessage (SendMessageRequest) returns (SendMessageResponse) {}
+
+  /// Gets diagnostics from the server such number of messages received.
+  rpc GetDiagnostics (DiagnosticsRequest) returns (DiagnosticsResponse) {}
+
+  /// Blocks until the service has received its first message vai SendMessage.
+  rpc WaitForFirstMessage (WaitForFirstMessageRequest) returns (WaitForFirstMessageResponse) {}
+
+  /// Pings the server / ensures it is available.
+  rpc Ping (PingRequest) returns (PingResponse) {}
+}
+
+message SendMessageRequest {
+}
+
+message SendMessageResponse {
+}
+
+message DiagnosticsRequest {
+}
+
+
+message ClientProcess {
+
+  /// Identifies the process in the system.
+  uint32 id = 1;
+
+  /// Identifies the threads that have called the server from this process.
+  repeated uint64 threads = 2;
+}
+
+message DiagnosticsResponse {
+
+  /// Uptime of the server.
+  google.protobuf.Duration uptime = 1;
+
+  /// Number of times SendMessage has been called since the server was started.
+  uint64 send_message_calls = 2;
+
+  /// Information about the clients that have called the server.
+  repeated ClientProcess clients = 3;
+}
+
+message WaitForFirstMessageRequest {
+}
+
+message WaitForFirstMessageResponse {
+}
+
+message PingRequest {
+}
+
+message PingResponse {
+}
