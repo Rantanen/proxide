@@ -1,3 +1,4 @@
+use crate::server::GrpcServer;
 pub use rust_grpc::{
     DiagnosticsRequest, DiagnosticsResponse, SendMessageRequest, SendMessageResponse,
 };
@@ -5,8 +6,8 @@ use std::time;
 use std::time::Duration;
 use tonic::transport::channel::Channel;
 
-mod generator;
-mod server;
+pub mod generator;
+pub mod server;
 
 pub mod rust_grpc
 {
@@ -75,6 +76,28 @@ impl GrpcTester
         })
     }
 
+    /// Creates a new testes with proxide prozy in-between
+    pub async fn with_proxide(
+        server: GrpcServer,
+        proxide_port: u16,
+        args: Args,
+    ) -> Result<GrpcTester, Box<dyn std::error::Error>>
+    {
+        let generator = generator::GrpcGenerator::start(generator::Args {
+            address: format!("http://[::1]:{}", proxide_port),
+            period: args.period,
+            tasks: args.tasks,
+        })
+        .await?;
+        let client =
+            rust_grpc::test_service_client::TestServiceClient::connect(server.http()).await?;
+        Ok(GrpcTester {
+            server,
+            generator,
+            client,
+        })
+    }
+
     pub async fn get_statistics(&self) -> Result<Statistics, Box<dyn std::error::Error>>
     {
         let diagnostics = self
@@ -98,13 +121,12 @@ impl GrpcTester
 
         Ok(())
     }
-}
 
-impl Drop for GrpcTester
-{
-    fn drop(&mut self)
+    /// Stops the message generator and returns server which is left running.
+    pub fn stop_generator(mut self) -> Result<GrpcServer, Box<dyn std::error::Error>>
     {
-        self.stop().expect("Dropping the tester failed.");
+        self.generator.stop()?;
+        Ok(self.server)
     }
 }
 
