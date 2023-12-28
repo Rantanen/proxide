@@ -1,6 +1,6 @@
 use crate::server::GrpcServer;
 pub use rust_grpc::{
-    DiagnosticsRequest, DiagnosticsResponse, SendMessageRequest, SendMessageResponse,
+    ClientProcess, DiagnosticsRequest, DiagnosticsResponse, SendMessageRequest, SendMessageResponse,
 };
 use std::time;
 use std::time::Duration;
@@ -31,6 +31,9 @@ pub struct Statistics
 
     /// Number of "SendMessage" calls the tester has processed.
     pub send_message_calls_processed: u64,
+
+    /// Information about the clients that have contacted the server.
+    pub clients: Vec<rust_grpc::ClientProcess>,
 }
 
 pub struct GrpcTester
@@ -110,6 +113,15 @@ impl GrpcTester
         Ok(Statistics {
             server_uptime: time::Duration::try_from(diagnostics.uptime.clone().unwrap())?,
             send_message_calls_processed: diagnostics.send_message_calls,
+            clients: diagnostics
+                .clients
+                .clone()
+                .into_iter()
+                .map(|c| ClientProcess {
+                    id: c.id,
+                    threads: c.threads,
+                })
+                .collect(),
         })
     }
 
@@ -194,5 +206,26 @@ mod test
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
         tester.stop().expect("Stopping tester failed.");
+    }
+
+    #[tokio::test]
+    async fn server_collects_generator_thread_id()
+    {
+        // Ensure the generator sends messages constantly to minimize the test duration.
+        let tester = GrpcTester::pipe_with_args(Args {
+            tasks: 1,
+            period: Duration::from_secs(0),
+        })
+        .await
+        .expect("Starting tester failed.");
+
+        // The server should have now received the first send_message call as the tester waits for it before returning.
+        let statistics = tester
+            .get_statistics()
+            .await
+            .expect("Retrieving statistics failed.");
+        assert_eq!(statistics.clients.len(), 1);
+        assert_eq!(statistics.clients[0].id, std::process::id());
+        assert!(statistics.clients[0].threads.len() > 0);
     }
 }

@@ -4,7 +4,10 @@ use rust_grpc_private::{SendMessageRequest, WaitForFirstMessageRequest};
 use std::{thread, time};
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::task::JoinSet;
+use tonic::metadata::MetadataValue;
 use tonic::transport::Channel;
+#[cfg(target_os = "windows")]
+use windows;
 
 mod rust_grpc_private
 {
@@ -157,7 +160,15 @@ async fn generate_messages_task(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
 {
     loop {
-        let request = tonic::Request::new(SendMessageRequest {});
+        let mut request = tonic::Request::new(SendMessageRequest {});
+        request.metadata_mut().append(
+            "proxide-client-process-id",
+            MetadataValue::from(std::process::id()),
+        );
+        request.metadata_mut().append(
+            "proxide-client-thread-id",
+            MetadataValue::from(get_current_native_thread_id()),
+        );
         tokio::select! {
             chosen = client.send_message(request) => { chosen?; },
             _chosen = tokio::signal::ctrl_c() => { break; }
@@ -202,8 +213,29 @@ async fn report_statistics(args: Args) -> Result<(), Box<dyn std::error::Error +
         let diagnostics = response.get_ref();
         let server_uptime = time::Duration::try_from(diagnostics.uptime.clone().unwrap())?;
         let call_rate = diagnostics.send_message_calls as u128 / server_uptime.as_millis();
-        println!("Call rate: {} calls / ms", call_rate);
+        println!(
+            "Call rate: {} calls / ms, processes: {} with {} threads",
+            call_rate,
+            diagnostics.clients.len(),
+            diagnostics
+                .clients
+                .iter()
+                .map(|c| c.threads.len() as u64)
+                .sum::<u64>()
+        );
 
         tokio::time::sleep(time::Duration::from_secs(2)).await;
+    }
+}
+
+/// Gets the current native thread id.
+pub fn get_current_native_thread_id() -> i64
+{
+    #[cfg(not(target_os = "windows"))]
+    return os_id::thread::get_raw_id() as i64;
+
+    #[cfg(target_os = "windows")]
+    unsafe {
+        return windows::Win32::System::Threading::GetCurrentThreadId() as i64;
     }
 }

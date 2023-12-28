@@ -50,6 +50,16 @@ message SendMessageResponse {
 message DiagnosticsRequest {
 }
 
+
+message ClientProcess {
+
+  /// Identifies the process in the system.
+  uint32 id = 1;
+
+  /// Identifies the threads that have called the server from this process.
+  repeated uint64 threads = 2;
+}
+
 message DiagnosticsResponse {
 
   /// Uptime of the server.
@@ -57,6 +67,9 @@ message DiagnosticsResponse {
 
   /// Number of times SendMessage has been called since the server was started.
   uint64 send_message_calls = 2;
+
+  /// Information about the clients that have called the server.
+  repeated ClientProcess clients = 3;
 }
 
 message WaitForFirstMessageRequest {

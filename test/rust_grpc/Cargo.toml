@@ -25,6 +25,16 @@ tokio-shutdown = "0.1.4"
 clap = {  version= "4.4.11", features = ["derive"] }
 portpicker = "0.1.1"
 atomic-counter = "1.0.1"
+os-id = "3.0.1"
+crossbeam-skiplist = "0.1.1"
+
+[dependencies.windows]
+version = "0.52.0"
+features = [
+    "Win32_Foundation",
+    "Win32_System_Threading",
+]
+
 
 [build-dependencies]
 tonic-build = { version = "0.10.2", features = ["prost"] }
