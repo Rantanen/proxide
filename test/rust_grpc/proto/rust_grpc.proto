@@ -23,6 +23,8 @@ option java_multiple_files = true;
 option java_package = "io.grpc.examples.rust_grpc";
 option java_outer_classname = "RustGrpcProto";
 
+import "google/protobuf/duration.proto";
+
 /// Test server
 service TestService {
 
@@ -49,6 +51,12 @@ message DiagnosticsRequest {
 }
 
 message DiagnosticsResponse {
+
+  /// Uptime of the server.
+  google.protobuf.Duration uptime = 1;
+
+  /// Number of times SendMessage has been called since the server was started.
+  uint64 send_message_calls = 2;
 }
 
 message WaitForFirstMessageRequest {

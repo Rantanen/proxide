@@ -1,3 +1,4 @@
+use atomic_counter::AtomicCounter;
 use clap::Parser;
 use rust_grpc_private::test_service_server::{TestService, TestServiceServer};
 use rust_grpc_private::{
@@ -6,38 +7,48 @@ use rust_grpc_private::{
 };
 use std::net::SocketAddr;
 use std::thread;
+use std::time::Instant;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::watch;
 use tokio::sync::watch::{Receiver, Sender};
 use tonic::transport::Server;
 use tonic::{Request, Response, Status};
 
-mod rust_grpc_private {
+mod rust_grpc_private
+{
     tonic::include_proto!("rust_grpc");
 }
 
 /// A simple gRPC Server for receiving messages
 #[derive(Parser, Debug)]
 #[command(author, version)]
-struct Args {
+struct Args
+{
     /// Network address to listen.
     #[arg(short, long, default_value = "[::1]:50051")]
     pub address: String,
 }
 
 /// A gRPC server ready to accept messages
-pub struct GrpcServer {
+pub struct GrpcServer
+{
     address: SocketAddr,
     server: Option<thread::JoinHandle<()>>,
     stop: UnboundedSender<()>,
 }
 
-impl GrpcServer {
+impl GrpcServer
+{
     /// Starts a new gRPC server.
-    pub async fn start() -> Result<Self, Box<dyn std::error::Error>> {
+    pub async fn start() -> Result<Self, Box<dyn std::error::Error>>
+    {
         // Start the server in a separate tokio runtime to ensure its tasks won't interfere with the tests.
-        let address: SocketAddr = "[::1]:50051".parse()?;
-        let address_clone = address.clone();
+        let address: SocketAddr = format!(
+            "[::1]:{}",
+            portpicker::pick_unused_port().expect("No TCP ports available.")
+        )
+        .parse()?;
+        let address_clone = address;
         let (server_listening_send, mut server_listening_recv) =
             tokio::sync::mpsc::unbounded_channel();
         let (stop_requested_send, mut stop_requested_recv) = tokio::sync::mpsc::unbounded_channel();
@@ -71,15 +82,17 @@ impl GrpcServer {
     }
 
     /// Gets the HTTP address of the server.
-    pub fn http(&self) -> String {
+    pub fn http(&self) -> String
+    {
         format!("http://{}", &self.address)
     }
 
     /// Stops the gRPC server.
-    pub fn stop(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        let _ = self.stop.send(());  // Fails when called repeatedly as the channel gets dropped.
+    pub fn stop(&mut self) -> Result<(), Box<dyn std::error::Error>>
+    {
+        let _ = self.stop.send(()); // Fails when called repeatedly as the channel gets dropped.
         if let Some(server) = self.server.take() {
-            if let Err(_) = server.join() {
+            if server.join().is_err() {
                 return Err(Box::<dyn std::error::Error + Send + Sync>::from(
                     "Waiting for the server to stop failed.",
                 ));
@@ -89,7 +102,8 @@ impl GrpcServer {
     }
 
     /// Pings the server and ensures it is listening.
-    async fn wait_for_server_to_listen(&self) -> Result<(), Box<dyn std::error::Error>> {
+    async fn wait_for_server_to_listen(&self) -> Result<(), Box<dyn std::error::Error>>
+    {
         // Try to establish connection to the server.
         const MAX_ATTEMPTS: u32 = 100;
         for attempt in 1.. {
@@ -108,7 +122,7 @@ impl GrpcServer {
                 };
             match client.ping(PingRequest {}).await {
                 Ok(_) => {
-                    break;  // A message was sent to the server.
+                    break; // A message was sent to the server.
                 }
                 Err(_) if attempt < MAX_ATTEMPTS => {
                     tokio::time::sleep(std::time::Duration::from_millis(20)).await;
@@ -123,24 +137,37 @@ impl GrpcServer {
     }
 }
 
-impl Drop for GrpcServer {
-    fn drop(&mut self) {
+impl Drop for GrpcServer
+{
+    fn drop(&mut self)
+    {
         self.stop().expect("Dropping GrpcServer failed.");
     }
 }
 
+/// A message sink for the message generator.
 ///
-struct LocalTestService {
+/// Collects statistics about the calls it receives.
+struct LocalTestService
+{
     /// A watcher for acknowledging that the first "SendMessage" call has been received by the server.
     message_received_notify: Sender<bool>,
 
     /// A watcher for checking whether the server has received "SendMessage" call,
     message_received_check: Receiver<bool>,
+
+    /// Timestamp when the service was created.
+    started: Instant,
+
+    /// The number of send_message calls the service has received.
+    send_message_calls_served: atomic_counter::RelaxedCounter,
 }
 
-impl LocalTestService {
+impl LocalTestService
+{
     /// Spawns the test service in a new asynchronous task.
-    fn spawn(address: SocketAddr) -> Result<(), Box<dyn std::error::Error>> {
+    fn spawn(address: SocketAddr) -> Result<(), Box<dyn std::error::Error>>
+    {
         tokio::spawn(async move {
             LocalTestService::run(address)
                 .await
@@ -150,14 +177,19 @@ impl LocalTestService {
     }
 
     /// Launches the the test service.
-    async fn run(address: SocketAddr) -> Result<(), Box<dyn std::error::Error>> {
+    async fn run(address: SocketAddr) -> Result<(), Box<dyn std::error::Error>>
+    {
         let (tx, rx) = watch::channel(false);
         let service = LocalTestService {
             message_received_notify: tx,
             message_received_check: rx,
+            started: Instant::now(),
+            send_message_calls_served: atomic_counter::RelaxedCounter::new(0),
         };
+        #[cfg(not(test))]
         println!("Test server listening on {}", address);
         Server::builder()
+            .concurrency_limit_per_connection(128)
             .add_service(TestServiceServer::new(service))
             .serve_with_shutdown(address, async {
                 tokio::signal::ctrl_c()
@@ -170,42 +202,59 @@ impl LocalTestService {
     }
 }
 
-impl Drop for LocalTestService {
-    fn drop(&mut self) {
+impl Drop for LocalTestService
+{
+    fn drop(&mut self)
+    {
         let _ = self.message_received_notify.send(true);
     }
 }
 
 #[tonic::async_trait]
-impl TestService for LocalTestService {
+impl TestService for LocalTestService
+{
     async fn send_message(
         &self,
         _request: Request<SendMessageRequest>,
-    ) -> Result<Response<SendMessageResponse>, Status> {
+    ) -> Result<Response<SendMessageResponse>, Status>
+    {
         // Avoid unnecessary notifications to reduce CPU <-> CPU communication.
         self.message_received_notify
             .send_if_modified(|value: &mut bool| {
+                #[allow(clippy::bool_comparison)]
                 if *value == false {
                     *value = true;
-                    return true;
+                    true
                 } else {
-                    return false;
+                    false
                 }
             });
+        self.send_message_calls_served.inc();
         Ok(Response::new(SendMessageResponse {}))
     }
 
     async fn get_diagnostics(
         &self,
         _request: Request<DiagnosticsRequest>,
-    ) -> Result<Response<DiagnosticsResponse>, Status> {
-        Err(Status::unimplemented(""))
+    ) -> Result<Response<DiagnosticsResponse>, Status>
+    {
+        let duration = Instant::now().duration_since(self.started);
+        let duration = match prost_types::Duration::try_from(duration) {
+            Ok(d) => d,
+            Err(_) => return Err(Status::internal("Calculating server uptime failed.")),
+        };
+
+        Ok(Response::new(DiagnosticsResponse {
+            uptime: Some(duration),
+            send_message_calls: self.send_message_calls_served.get() as u64,
+        }))
     }
 
     async fn wait_for_first_message(
         &self,
         _request: Request<WaitForFirstMessageRequest>,
-    ) -> Result<Response<WaitForFirstMessageResponse>, Status> {
+    ) -> Result<Response<WaitForFirstMessageResponse>, Status>
+    {
         self.message_received_check
             .clone()
             .wait_for(|value| value == &true)
@@ -214,14 +263,16 @@ impl TestService for LocalTestService {
         Ok(Response::new(WaitForFirstMessageResponse {}))
     }
 
-    async fn ping(&self, _request: Request<PingRequest>) -> Result<Response<PingResponse>, Status> {
+    async fn ping(&self, _request: Request<PingRequest>) -> Result<Response<PingResponse>, Status>
+    {
         Ok(Response::new(PingResponse {}))
     }
 }
 
 #[tokio::main]
 #[allow(dead_code)]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<(), Box<dyn std::error::Error>>
+{
     let args = Args::parse();
     LocalTestService::spawn(args.address.parse()?)?;
     tokio::signal::ctrl_c().await?;
