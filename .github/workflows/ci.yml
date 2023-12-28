@@ -30,20 +30,26 @@ jobs:
           profile: minimal
           override: true
 
+      - name: Install Protoc
+        uses: arduino/setup-protoc@v2
+
       - name: Environment
         run: |
           cargo --version
           rustc --version
+          protoc --version 
 
       - name: Build
-        run: cargo build
+        run: |
+          cargo build
+          cargo build --manifest-path ./test/rust_grpc/Cargo.toml
 
       - name: Tests
         shell: bash
         run: |
           cd test
-          ./test_script.sh
-
+          cargo test --manifest-path ./rust_grpc/Cargo.toml
+          ./test_script.sh          
 
   style:
     name: Fmt & Clippy
@@ -58,11 +64,17 @@ jobs:
           profile: minimal
           override: true
           components: rustfmt, clippy
+
+      - name: Install Protoc
+        uses: arduino/setup-protoc@v2
+
       - name: Environment
         run: |
           cargo --version
           cargo fmt -- --version
           cargo clippy -- --version
+          protoc --version
+
       - name: Run rustfmt
         run: |
           cargo fmt --all -- --check
