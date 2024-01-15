@@ -33,11 +33,18 @@ impl<B: Backend> View<B> for CallstackView
             client_thread.process_id(),
             client_thread.thread_id()
         );
-        let message = match request.request_data.client_callstack {
+        let message: String = match &request.request_data.client_callstack {
             Some(ClientCallstack::Unsupported) => {
-                "Callstack unavailable:\n* Unsupported operating system."
-            }
-            None => ".. (Pending)",
+                "Callstack unavailable:\n* Unsupported operating system.".to_string()
+            },
+            Some(ClientCallstack::Throttled) => {
+                "Callstack unavailable:\n* The maximum number of parallel callstack capture operations was reached.".to_string()
+            },
+            Some(ClientCallstack::Callstack( thread)) => message_from_thread( thread ),
+            Some(ClientCallstack::Error(error)) => {
+                format!("{:?}", error)
+            },
+            None => ".. (Pending)".to_string(),
         };
         let block = create_block(&title);
         let request_data = Paragraph::new(message)
@@ -85,4 +92,20 @@ impl<B: Backend> View<B> for CallstackView
             "[Up/Down, j/k, PgUp/PgDn]: Scroll; [F12]: Export to file", "[Esc]: Back to main view"
         )
     }
+}
+
+fn message_from_thread(thread: &crate::session::callstack::Thread) -> String
+{
+    let title = format!("{} ({})", thread.name(), thread.id());
+    let callstack = thread
+        .frames()
+        .iter()
+        .flat_map(|f| f.symbols())
+        .map(|s| s.name())
+        .fold(String::default(), |mut acc, name| {
+            acc.push_str(name);
+            acc.push('\n');
+            acc
+        });
+    format!("{}\n\n{}", title, callstack)
 }

@@ -33,6 +33,11 @@ jobs:
       - name: Install Protoc
         uses: arduino/setup-protoc@v2
 
+      - name: Install libunwind-dev
+        uses: ConorMacBride/install-package@v1
+        with:
+          apt: libunwind-dev
+
       - name: Environment
         run: |
           cargo --version
@@ -68,6 +73,10 @@ jobs:
 
       - name: Install Protoc
         uses: arduino/setup-protoc@v2
+
+      - name: Install libunwind-dev
+        run: |
+          sudo apt update && sudo apt install -y libunwind-dev
 
       - name: Environment
         run: |

@@ -9,6 +9,7 @@ use crossterm::{
 };
 use log::error;
 use snafu::{ResultExt, Snafu};
+use std::env;
 use std::fs::File;
 use std::io::stdout;
 use std::io::Read;
@@ -89,6 +90,11 @@ pub struct ProxyFilter
 
 fn main()
 {
+    // Launched to capture stack?
+    if env::args_os().len() == 2 && env::args_os().any(|p| p == "child") {
+        return;
+    }
+
     match proxide_main() {
         Ok(_) => (),
         Err(e) => {
@@ -430,6 +436,7 @@ mod test
     use tokio::time::Instant;
 
     use crate::session::events::SessionEvent;
+    use crate::session::ClientCallstack;
     use crate::ConnectionOptions;
 
     lazy_static! {
@@ -570,15 +577,22 @@ mod test
 
         // UI channel should be constantly receiving client callstack events.
         // The generator includes the process id and the thread id in the messages it sends.
-        let mut client_callstack_received = false;
+        let mut client_callstack_received: Option<crate::session::callstack::Thread> = None;
         let timeout_at = Instant::now().add(Duration::from_secs(30));
         while let Some(message) = tokio::select! {
             result = message_rx.recv() => result,
             _t = tokio::time::sleep( Duration::from_secs( 30 ) ) => panic!( "Timeout" ),
             error = error_monitor.recv() => panic!( "{:?}", error ),
         } {
-            if let SessionEvent::ClientCallstackProcessed(..) = message {
-                client_callstack_received = true;
+            // Try to collect a valid callstack.
+            // The capture process has a throttling mechanism which may skip some captures.
+            if let SessionEvent::ClientCallstackProcessed(event) = message {
+                match event.callstack {
+                    ClientCallstack::Callstack(thread) => client_callstack_received = Some(thread),
+                    ClientCallstack::Throttled => {}
+                    ClientCallstack::Unsupported => break,
+                    ClientCallstack::Error(error) => panic!("{:?}", error),
+                }
                 break;
             } else if Instant::now() > timeout_at {
                 panic!("Timeout")
@@ -586,7 +600,18 @@ mod test
         }
 
         // Ensure the ui channel was not closed prematurely.
-        assert!(client_callstack_received);
+        #[cfg(target_os = "linux")]
+        {
+            let client_callstack_received =
+                client_callstack_received.expect("Client callstack unavailable.");
+            assert_eq!(client_callstack_received.name(), "grpc-generator");
+        }
+
+        // Verify callstack 1with tne new supported OS as well.
+        #[cfg(not(target_os = "linux"))]
+        {
+            assert!(client_callstack_received.is_none());
+        }
 
         let mut server = tester.stop_generator().expect("Stopping generator failed.");
         abort_tx.send(()).expect("Stopping proxide failed.");
