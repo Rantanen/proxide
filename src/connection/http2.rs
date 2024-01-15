@@ -8,10 +8,15 @@ use h2::{
 use http::{HeaderMap, Request, Response};
 use log::error;
 use snafu::ResultExt;
+use std::convert::TryFrom;
 use std::net::SocketAddr;
+use std::pin::Pin;
 use std::sync::mpsc::Sender;
+use std::task::{Context, Poll};
 use std::time::SystemTime;
 use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::sync::{Semaphore, SemaphorePermit, TryAcquireError};
+use tokio::task::{JoinHandle, JoinSet};
 use uuid::Uuid;
 
 use super::*;
@@ -87,6 +92,7 @@ where
             // The client_connection will produce individual HTTP request that we'll accept.
             // These requests will be handled in parallel by spawning them into their own
             // tasks.
+            let processing_control = ProcessingControl::new();
             while let Some(request) = client_connection.accept().await {
                 let (client_request, client_response) =
                     request.context(H2Error {}).context(ClientError {
@@ -100,6 +106,7 @@ where
                     client_request,
                     client_response,
                     server_stream,
+                    processing_control.clone(),
                     &ui,
                 )?;
 
@@ -141,16 +148,29 @@ pub struct ProxyRequest
     client_response: SendResponse<Bytes>,
     server_request: SendStream<Bytes>,
     server_response: ResponseFuture,
+    request_processor: ProcessingFuture,
+}
+
+/// Manages the asynchronous auxiliary processing of requests.
+struct ProcessingControl
+{
+    callstack_capture_limiter: Semaphore,
+}
+
+struct ProcessingFuture
+{
+    inner: JoinHandle<()>,
 }
 
 impl ProxyRequest
 {
-    pub fn new(
+    fn new(
         connection_uuid: Uuid,
         authority: Option<String>,
         client_request: Request<RecvStream>,
         client_response: SendResponse<Bytes>,
         server_stream: &mut client::SendRequest<Bytes>,
+        processing_control: Arc<ProcessingControl>,
         ui: &Sender<SessionEvent>,
     ) -> Result<ProxyRequest>
     {
@@ -191,6 +211,10 @@ impl ProxyRequest
         }))
         .unwrap();
 
+        // Request processor supports asynchronous message processing while the proxide is busy proxying data between
+        // the client and the server.
+        let request_processor = ProcessingFuture::spawn(uuid, &client_head, processing_control, ui);
+
         let server_request = Request::from_parts(client_head, ());
 
         // Set up a server request.
@@ -208,6 +232,7 @@ impl ProxyRequest
             client_response,
             server_request,
             server_response,
+            request_processor,
         })
     }
 
@@ -265,6 +290,7 @@ impl ProxyRequest
         let mut client_response = self.client_response;
         let server_response = self.server_response;
         let connection_uuid = self.connection_uuid;
+        let request_processor = self.request_processor;
         let ui_temp = ui.clone();
         let response_future = async move {
             let ui = ui_temp;
@@ -292,6 +318,11 @@ impl ProxyRequest
                 .context(ClientError {
                     scenario: "sending response",
                 })?;
+
+            // Ensure the request processor has finished before we send the response to the client.
+            // Callstack capturing process inside the request processor may capture incorrect data if
+            // the client is given the final answer from the server as it no longer has to wait for the response.
+            request_processor.await;
 
             // The server might have sent all the details in the headers, at which point there is
             // no body present. Check for this scenario here.
@@ -439,4 +470,156 @@ fn is_fatal_error<S>(r: &Result<S, Error>) -> bool
             _ => true,
         },
     }
+}
+
+impl ProcessingFuture
+{
+    fn spawn(
+        uuid: Uuid,
+        client_head: &http::request::Parts,
+        processing_control: Arc<ProcessingControl>,
+        ui: &Sender<SessionEvent>,
+    ) -> Self
+    {
+        let mut tasks: JoinSet<std::result::Result<(), Box<dyn std::error::Error + Send + Sync>>> =
+            JoinSet::new();
+
+        // Task which attempts to capture client's callstack.
+        if let Ok(thread_id) = crate::connection::ClientThreadId::try_from(&client_head.headers) {
+            let ui_clone = ui.clone();
+            tasks.spawn(ProcessingFuture::capture_client_callstack(
+                uuid,
+                thread_id,
+                processing_control.clone(),
+                ui_clone,
+            ));
+        }
+
+        Self {
+            inner: tokio::spawn(async move {
+                while let Some(result) = tasks.join_next().await {
+                    match result {
+                        Ok(_) => {}
+                        Err(e) => {
+                            // TODO: Send the error to UI.
+                            eprintln!("{}", e);
+                            error!("{}", e);
+                        }
+                    }
+                }
+            }),
+        }
+    }
+
+    async fn capture_client_callstack(
+        uuid: Uuid,
+        client_thread_id: ClientThreadId,
+        processing_control: Arc<ProcessingControl>,
+        ui: Sender<SessionEvent>,
+    ) -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>>
+    {
+        // Capturing the callstacks is a very expensive operation
+        // Capturing is throttled with the semaphore in processing_control
+        match processing_control.try_request_capture_callstack_permit() {
+            Ok(_) => {
+                // TODO Callstack capture: Add support for other operating systems.
+                #[cfg(target_os = "linux")]
+                capture_client_callstack_rstack(uuid, client_thread_id, ui).await?;
+
+                #[cfg(not(target_os = "linux"))]
+                capture_client_callstack_unsupported(uuid, client_thread_id, ui).await?;
+
+                Ok(())
+            }
+            Err(TryAcquireError::NoPermits) => {
+                ui.send(SessionEvent::ClientCallstackProcessed(
+                    ClientCallstackProcessedEvent {
+                        uuid,
+                        callstack: ClientCallstack::Throttled,
+                    },
+                ))?;
+                Ok(())
+            }
+            Err(e) => Err(Box::from(e)),
+        }
+    }
+}
+
+impl Future for ProcessingFuture
+{
+    type Output = ();
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output>
+    {
+        match Pin::new(&mut self.inner).poll(cx) {
+            Poll::Ready(_) => Poll::Ready(()),
+            Poll::Pending => Poll::Pending,
+        }
+    }
+}
+
+impl ProcessingControl
+{
+    fn new() -> Arc<Self>
+    {
+        let parallel_callstack_capture_limit = if cfg!(not(test)) { 5 } else { 1 };
+        Arc::new(Self {
+            callstack_capture_limiter: Semaphore::new(parallel_callstack_capture_limit),
+        })
+    }
+
+    /// Requests permissions to capture a cleint callstack.
+    fn try_request_capture_callstack_permit(&self) -> Result<SemaphorePermit<'_>, TryAcquireError>
+    {
+        self.callstack_capture_limiter.try_acquire()
+    }
+}
+
+#[cfg(target_os = "linux")]
+async fn capture_client_callstack_rstack(
+    uuid: Uuid,
+    client_thread_id: ClientThreadId,
+    ui: Sender<SessionEvent>,
+) -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>>
+{
+    if client_thread_id.process_id != std::process::id() {
+        capture_client_callstack_unsupported(uuid, client_thread_id, ui).await
+    } else {
+        // The caller requested trace from the process itself.
+        // This should only happen in unit tests.
+        // Process cannot capture callstack from itself which is why the operation is delegated to rstack_launcher
+        // helper library available in tests.
+
+        #[cfg(test)]
+        {
+            let thread = rstack_launcher::capture_self(client_thread_id.thread_id)?;
+            ui.send(SessionEvent::ClientCallstackProcessed(
+                ClientCallstackProcessedEvent {
+                    uuid,
+                    callstack: ClientCallstack::Callstack(callstack::Thread::from(&thread)),
+                },
+            ))?;
+        }
+
+        #[cfg(not(test))]
+        {
+            capture_client_callstack_unsupported(uuid, client_thread_id, ui).await?;
+        }
+        Ok(())
+    }
+}
+
+async fn capture_client_callstack_unsupported(
+    uuid: Uuid,
+    _client_thread_id: ClientThreadId,
+    ui: Sender<SessionEvent>,
+) -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>>
+{
+    ui.send(SessionEvent::ClientCallstackProcessed(
+        ClientCallstackProcessedEvent {
+            uuid,
+            callstack: ClientCallstack::Unsupported,
+        },
+    ))?;
+    Ok(())
 }

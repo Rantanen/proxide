@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use uuid::Uuid;
 
+pub mod callstack;
 pub mod events;
 pub mod serialization;
 
@@ -56,6 +57,7 @@ pub struct RequestData
 
     pub start_timestamp: DateTime<Local>,
     pub end_timestamp: Option<DateTime<Local>>,
+    pub client_callstack: Option<ClientCallstack>,
     pub status: Status,
 }
 
@@ -124,6 +126,29 @@ impl MessageData
         self.start_timestamp = Some(ts);
         self
     }
+}
+
+#[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
+pub enum ClientCallstack
+{
+    /// Proxide does not support callstack capture on the current platform/operating system.
+    Unsupported,
+
+    /// The maximum number of parallel callstack captures was reached.
+    Throttled,
+
+    /// Captured client thread with its callstack.
+    Callstack(crate::session::callstack::Thread),
+
+    /// An error occurred during the capture process.
+    Error(ClientCallstackError),
+}
+
+#[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
+pub enum ClientCallstackError
+{
+    /// An internal error to proxide occurred while capturing or processing the callstack.
+    Internal(String),
 }
 
 impl<T> IndexedVec<T>
