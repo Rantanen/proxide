@@ -149,6 +149,9 @@ pub enum ClientCallstackError
 {
     /// An internal error to proxide occurred while capturing or processing the callstack.
     Internal(String),
+
+    /// The specified thread was not available in the client process.
+    ThreadUnavailable(i64),
 }
 
 impl<T> IndexedVec<T>

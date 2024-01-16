@@ -511,9 +511,42 @@ impl ProcessingFuture
         ui: Sender<SessionEvent>,
     ) -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>>
     {
+        match ProcessingFuture::try_capture_client_callstack(
+            uuid,
+            client_thread_id,
+            processing_control,
+            ui.clone(),
+        )
+        .await
+        {
+            Ok(_) => {}
+            Err(error) => {
+                ui.send(SessionEvent::ClientCallstackProcessed(
+                    ClientCallstackProcessedEvent {
+                        uuid,
+                        callstack: ClientCallstack::Error(ClientCallstackError::Internal(
+                            error.to_string(),
+                        )),
+                    },
+                ))?;
+            }
+        }
+        Ok(())
+    }
+
+    async fn try_capture_client_callstack(
+        uuid: Uuid,
+        client_thread_id: ClientThreadId,
+        processing_control: Arc<ProcessingControl>,
+        ui: Sender<SessionEvent>,
+    ) -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>>
+    {
         // Capturing the callstacks is a very expensive operation
         // Capturing is throttled with the semaphore in processing_control
-        match processing_control.acquire_callstack_capture_permit().await? {
+        match processing_control
+            .acquire_callstack_capture_permit()
+            .await?
+        {
             Some(_) => {
                 // TODO Callstack capture: Add support for other operating systems.
                 #[cfg(target_os = "linux")]
@@ -523,7 +556,7 @@ impl ProcessingFuture
                 capture_client_callstack_unsupported(uuid, client_thread_id, ui).await?;
 
                 Ok(())
-            },
+            }
             None => {
                 ui.send(SessionEvent::ClientCallstackProcessed(
                     ClientCallstackProcessedEvent {
@@ -532,7 +565,7 @@ impl ProcessingFuture
                     },
                 ))?;
                 Ok(())
-            },
+            }
         }
     }
 }
@@ -558,7 +591,29 @@ async fn capture_client_callstack_rstack(
 ) -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>>
 {
     if client_thread_id.process_id != std::process::id() {
-        capture_client_callstack_unsupported(uuid, client_thread_id, ui).await
+        let process = match rstack::TraceOptions::new()
+            .thread_names(true)
+            .symbols(true)
+            .trace(client_thread_id.process_id())
+        {
+            Ok(process) => process,
+            Err(error) => return Err(Box::new(error)),
+        };
+
+        let callstack = match process
+            .threads()
+            .iter()
+            .find(|t| t.id() as i64 == client_thread_id.thread_id)
+        {
+            Some(thread) => ClientCallstack::Callstack(callstack::Thread::from(thread)),
+            None => ClientCallstack::Error(ClientCallstackError::ThreadUnavailable(
+                client_thread_id.thread_id(),
+            )),
+        };
+        ui.send(SessionEvent::ClientCallstackProcessed(
+            ClientCallstackProcessedEvent { uuid, callstack },
+        ))?;
+        Ok(())
     } else {
         // The caller requested trace from the process itself.
         // This should only happen in unit tests.
@@ -584,6 +639,7 @@ async fn capture_client_callstack_rstack(
     }
 }
 
+#[allow(dead_code)]
 async fn capture_client_callstack_unsupported(
     uuid: Uuid,
     _client_thread_id: ClientThreadId,
