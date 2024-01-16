@@ -6,6 +6,7 @@ use std::sync::mpsc::Sender;
 use std::sync::Arc;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
+use tokio::sync::{Semaphore, TryAcquireError};
 use uuid::Uuid;
 
 use crate::session::events::*;
@@ -126,6 +127,43 @@ impl<TClient, TServer> Streams<TClient, TServer>
     }
 }
 
+/// Manages the asynchronous auxiliary processing of connections and associated requests.
+pub struct ProcessingControl
+{
+    /// Limits the number of parallel callstack captures.
+    callstack_capture_limiter: Semaphore,
+}
+
+impl ProcessingControl
+{
+    pub fn new() -> Arc<Self>
+    {
+        // rstack / libunwind does not allow multiple captures in parallel.
+        // The limit must be, for now, always '1'.
+        // let parallel_callstack_capture_limit = if cfg!(not(test)) { 5 } else { 1 };
+        let parallel_callstack_capture_limit = 1;
+        Arc::new(Self {
+            callstack_capture_limiter: Semaphore::new(parallel_callstack_capture_limit),
+        })
+    }
+
+    /// Requests permissions to capture a client callstack.
+    async fn acquire_callstack_capture_permit(&self) -> Result<Option<impl Drop + '_>>
+    {
+        // TODO Add option for forcing callstack capture for all requests and wait for the permit here.
+        match self.callstack_capture_limiter.try_acquire() {
+            Ok(permit) => Ok(Some(permit)),
+            Err(TryAcquireError::NoPermits) => Ok(None),
+            Err(TryAcquireError::Closed) => Err(Error::ClientError {
+                scenario: "Unable to capture callstack",
+                source: EndpointError::ProxideError {
+                    reason: "Permit limiter has been closed.",
+                },
+            }),
+        }
+    }
+}
+
 /// When available, identifies the thread in the calling or client process.
 /// The client should reports its process id with the proxide-client-process-id" header and
 /// the thread id with the "proxide-client-thread-id" header.
@@ -190,6 +228,7 @@ pub async fn run(
     client: TcpStream,
     src_addr: SocketAddr,
     options: Arc<ConnectionOptions>,
+    processing_control: Arc<ProcessingControl>,
     ui: Sender<SessionEvent>,
 ) -> Result<()>
 {
@@ -198,7 +237,7 @@ pub async fn run(
         protocol_stack: vec![],
         opaque_redirect: None,
     };
-    connect_phase(details, client, src_addr, options, ui).await
+    connect_phase(details, client, src_addr, options, processing_control, ui).await
 }
 
 /// Establishes the connection to the server.
@@ -210,6 +249,7 @@ pub async fn connect_phase(
     client: TcpStream,
     src_addr: SocketAddr,
     options: Arc<ConnectionOptions>,
+    processing_control: Arc<ProcessingControl>,
     ui: Sender<SessionEvent>,
 ) -> Result<()>
 {
@@ -265,6 +305,7 @@ pub async fn connect_phase(
                 src_addr,
                 connect_data.target_server,
                 options,
+                processing_control,
                 ui,
             )
             .await
@@ -309,12 +350,16 @@ pub async fn connect_phase(
             src_addr,
             target_server.to_string(),
             options,
+            processing_control,
             ui,
         )
         .await
     }
 }
 
+/// Delegates the connections to appropriate handler based on the protocol.
+/// TODO Fix clippy warning. Parameters are all created or consumed at different locations => difficult to group.
+#[allow(clippy::too_many_arguments)]
 pub async fn handle_protocol<TClient, TServer>(
     mut details: ConnectionDetails,
     protocol: demux::Protocol,
@@ -322,6 +367,7 @@ pub async fn handle_protocol<TClient, TServer>(
     src_addr: SocketAddr,
     target: String,
     options: Arc<ConnectionOptions>,
+    processing_control: Arc<ProcessingControl>,
     ui: Sender<SessionEvent>,
 ) -> Result<()>
 where
@@ -331,9 +377,9 @@ where
     let ui_clone = ui.clone();
     if protocol == demux::Protocol::Tls {
         let streams = tls::handle(&mut details, streams, options.clone(), target).await?;
-        http2::handle(details, src_addr, streams, ui_clone).await?;
+        http2::handle(details, src_addr, streams, processing_control, ui_clone).await?;
     } else {
-        http2::handle(details, src_addr, streams, ui_clone).await?;
+        http2::handle(details, src_addr, streams, processing_control, ui_clone).await?;
     }
 
     Ok(())

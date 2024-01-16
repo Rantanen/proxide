@@ -391,10 +391,16 @@ fn spawn_accept(
     ui_tx: Sender<session::events::SessionEvent>,
 )
 {
+    let processing_control = connection::ProcessingControl::new();
     tokio::spawn(async move {
         loop {
             let ui_tx = ui_tx.clone();
-            new_connection(ui_tx, listener.accept().await, options.clone());
+            new_connection(
+                ui_tx,
+                listener.accept().await,
+                options.clone(),
+                processing_control.clone(),
+            );
         }
     });
 }
@@ -403,13 +409,14 @@ fn new_connection(
     tx: Sender<session::events::SessionEvent>,
     result: Result<(TcpStream, SocketAddr), std::io::Error>,
     options: Arc<ConnectionOptions>,
+    processing_control: Arc<crate::connection::ProcessingControl>,
 )
 {
     // Process the new connection by spawning a new tokio task. This allows the original task to
     // process more connections.
     if let Ok((socket, src_addr)) = result {
         tokio::spawn(async move {
-            match run(socket, src_addr, options, tx).await {
+            match run(socket, src_addr, options, processing_control, tx).await {
                 Ok(..) => {}
                 Err(e) => error!("Connection error\n{}", e),
             }

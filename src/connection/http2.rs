@@ -15,7 +15,6 @@ use std::sync::mpsc::Sender;
 use std::task::{Context, Poll};
 use std::time::SystemTime;
 use tokio::io::{AsyncRead, AsyncWrite};
-use tokio::sync::{Semaphore, SemaphorePermit, TryAcquireError};
 use tokio::task::{JoinHandle, JoinSet};
 use uuid::Uuid;
 
@@ -25,6 +24,7 @@ pub async fn handle<TClient, TServer>(
     mut details: ConnectionDetails,
     client_addr: SocketAddr,
     streams: Streams<TClient, TServer>,
+    processing_control: Arc<ProcessingControl>,
     ui: Sender<SessionEvent>,
 ) -> Result<()>
 where
@@ -92,7 +92,6 @@ where
             // The client_connection will produce individual HTTP request that we'll accept.
             // These requests will be handled in parallel by spawning them into their own
             // tasks.
-            let processing_control = ProcessingControl::new();
             while let Some(request) = client_connection.accept().await {
                 let (client_request, client_response) =
                     request.context(H2Error {}).context(ClientError {
@@ -149,12 +148,6 @@ pub struct ProxyRequest
     server_request: SendStream<Bytes>,
     server_response: ResponseFuture,
     request_processor: ProcessingFuture,
-}
-
-/// Manages the asynchronous auxiliary processing of requests.
-struct ProcessingControl
-{
-    callstack_capture_limiter: Semaphore,
 }
 
 struct ProcessingFuture
@@ -520,8 +513,8 @@ impl ProcessingFuture
     {
         // Capturing the callstacks is a very expensive operation
         // Capturing is throttled with the semaphore in processing_control
-        match processing_control.try_request_capture_callstack_permit() {
-            Ok(_) => {
+        match processing_control.acquire_callstack_capture_permit().await? {
+            Some(_) => {
                 // TODO Callstack capture: Add support for other operating systems.
                 #[cfg(target_os = "linux")]
                 capture_client_callstack_rstack(uuid, client_thread_id, ui).await?;
@@ -530,8 +523,8 @@ impl ProcessingFuture
                 capture_client_callstack_unsupported(uuid, client_thread_id, ui).await?;
 
                 Ok(())
-            }
-            Err(TryAcquireError::NoPermits) => {
+            },
+            None => {
                 ui.send(SessionEvent::ClientCallstackProcessed(
                     ClientCallstackProcessedEvent {
                         uuid,
@@ -539,8 +532,7 @@ impl ProcessingFuture
                     },
                 ))?;
                 Ok(())
-            }
-            Err(e) => Err(Box::from(e)),
+            },
         }
     }
 }
@@ -555,23 +547,6 @@ impl Future for ProcessingFuture
             Poll::Ready(_) => Poll::Ready(()),
             Poll::Pending => Poll::Pending,
         }
-    }
-}
-
-impl ProcessingControl
-{
-    fn new() -> Arc<Self>
-    {
-        let parallel_callstack_capture_limit = if cfg!(not(test)) { 5 } else { 1 };
-        Arc::new(Self {
-            callstack_capture_limiter: Semaphore::new(parallel_callstack_capture_limit),
-        })
-    }
-
-    /// Requests permissions to capture a cleint callstack.
-    fn try_request_capture_callstack_permit(&self) -> Result<SemaphorePermit<'_>, TryAcquireError>
-    {
-        self.callstack_capture_limiter.try_acquire()
     }
 }
 
