@@ -51,7 +51,9 @@ impl PartialEq for FutureEvent
 {
     fn eq(&self, other: &Self) -> bool
     {
-        self.instant.eq(&other.instant)
+        // clippy reports an "unconditional recursion"false positive here in the pipeline with:
+        // "self.instant.eq(&other.instant)"
+        PartialEq::<Instant>::eq(&self.instant, &other.instant)
     }
 }
 

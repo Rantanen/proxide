@@ -41,11 +41,18 @@ wildmatch = "1"
 glob = "0.3"
 shell-words = "1"
 
+[target.'cfg(unix)'.dependencies]
+rstack = "0.3.3"
+
 [dev-dependencies]
 portpicker = "0.1.1"
 grpc-tester = { version = "0.1.0", path = "test/rust_grpc"}
 serial_test = "2.0.0"
 lazy_static = "1.4.0"
+
+[target.'cfg(unix)'.dev-dependencies]
+rstack-self = "0.3.0"
+rstack-launcher = { version = "0.1.0", path = "test/rstack-launcher" }
 
 [profile.release]
 debug = true

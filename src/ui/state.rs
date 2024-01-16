@@ -257,7 +257,7 @@ impl<B: Backend> ProxideUi<B>
         let help_text = if let Some(cmd) = &self.input_command {
             format!("{}\n{}{}", cmd.help, cmd.prompt, cmd.input)
         } else {
-            let view = self.ui_stack.last_mut().unwrap();
+            let view = self.ui_stack.last_mut().expect("Empty UI stack.");
             view.help_text(&self.context, self.context.size)
         };
 
