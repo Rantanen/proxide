@@ -132,6 +132,7 @@ impl<B: Backend> View<B> for MainView
                 .selected(&ctx.data.requests)
                 .map(|r| r.request_data.uuid == *req)
                 .unwrap_or(false),
+            SessionChange::Callstack { .. } => false,
         }
     }
 

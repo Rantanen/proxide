@@ -1,4 +1,6 @@
+use http::{HeaderMap, HeaderValue};
 use snafu::{ResultExt, Snafu};
+use std::convert::TryFrom;
 use std::net::SocketAddr;
 use std::sync::mpsc::Sender;
 use std::sync::Arc;
@@ -121,6 +123,58 @@ impl<TClient, TServer> Streams<TClient, TServer>
     pub fn new(client: TClient, server: TServer) -> Self
     {
         Self { client, server }
+    }
+}
+
+/// When available, identifies the thread in the calling or client process.
+/// The client should reports its process id with the proxide-client-process-id" header and
+/// the thread id with the "proxide-client-thread-id" header.
+/// This enables the proxide proxy to capture client's callstack when it is making the call if the proxide
+/// and the client are running on the same host.
+pub struct ClientThreadId
+{
+    process_id: u32,
+    thread_id: i64,
+}
+
+impl ClientThreadId
+{
+    pub fn process_id(&self) -> u32
+    {
+        self.process_id
+    }
+
+    pub fn thread_id(&self) -> i64
+    {
+        self.thread_id
+    }
+}
+
+impl TryFrom<&MessageData> for ClientThreadId
+{
+    type Error = ();
+
+    fn try_from(value: &MessageData) -> std::result::Result<Self, Self::Error>
+    {
+        ClientThreadId::try_from(&value.headers)
+    }
+}
+
+impl TryFrom<&HeaderMap> for ClientThreadId
+{
+    type Error = ();
+
+    fn try_from(value: &HeaderMap) -> std::result::Result<Self, Self::Error>
+    {
+        let process_id: Option<u32> = number_or_none(&value.get("proxide-client-process-id"));
+        let thread_id: Option<i64> = number_or_none(&value.get("proxide-client-thread-id"));
+        match (process_id, thread_id) {
+            (Some(process_id), Some(thread_id)) => Ok(ClientThreadId {
+                process_id,
+                thread_id,
+            }),
+            _ => Err(()),
+        }
     }
 }
 
@@ -310,4 +364,18 @@ where
         }
         log::info!("Exit");
     });
+}
+
+fn number_or_none<N>(header: &Option<&HeaderValue>) -> Option<N>
+where
+    N: std::str::FromStr,
+{
+    if let Some(value) = header {
+        value
+            .to_str()
+            .map(|s| N::from_str(s).map(|n| Some(n)).unwrap_or(None))
+            .unwrap_or(None)
+    } else {
+        None
+    }
 }

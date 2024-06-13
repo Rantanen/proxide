@@ -56,6 +56,7 @@ pub struct RequestData
 
     pub start_timestamp: DateTime<Local>,
     pub end_timestamp: Option<DateTime<Local>>,
+    pub client_callstack: Option<ClientCallstack>,
     pub status: Status,
 }
 
@@ -124,6 +125,13 @@ impl MessageData
         self.start_timestamp = Some(ts);
         self
     }
+}
+
+#[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
+pub enum ClientCallstack
+{
+    /// Proxide does not support callstack capture on the current platform/operating system.
+    Unsupported,
 }
 
 impl<T> IndexedVec<T>

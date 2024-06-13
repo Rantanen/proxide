@@ -155,6 +155,7 @@ impl<B: Backend> View<B> for MessageView
             | SessionChange::Message { request, part } => {
                 *part == self.part && *request == self.request
             }
+            SessionChange::Callstack { .. } => false,
         }
     }
 

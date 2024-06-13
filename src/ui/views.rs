@@ -6,6 +6,9 @@ pub use main_view::MainView;
 mod message_view;
 pub use message_view::MessageView;
 
+mod callstack_view;
+pub use callstack_view::CallstackView;
+
 pub trait View<B: Backend>
 {
     fn draw(&mut self, ctx: &UiContext, f: &mut Frame<B>, chunk: Rect);
