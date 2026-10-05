@@ -86,14 +86,8 @@ impl DecoderFactory for GrpcDecoderFactory
         let mut path = request.uri.path().rsplit('/');
         let function = path.next().unwrap();
         let service = path.next().unwrap();
-        let service = match self.ctx.get_service(service) {
-            None => return None,
-            Some(s) => s,
-        };
-        let function = match service.rpcs.iter().find(|f| f.name == function) {
-            None => return None,
-            Some(f) => f,
-        };
+        let service = self.ctx.get_service(service)?;
+        let function = service.rpcs.iter().find(|f| f.name == function)?;
 
         let ty = match msg.part {
             RequestPart::Request => &function.input.message,
@@ -152,7 +146,7 @@ impl Decoder for GrpcDecoder
         "grpc"
     }
 
-    fn decode(&self, msg: &MessageData) -> Text
+    fn decode(&self, msg: &MessageData) -> Text<'_>
     {
         let mut builder = TextBuilder::default();
         if !msg.headers.is_empty() {

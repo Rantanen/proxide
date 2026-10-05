@@ -86,30 +86,20 @@ pub struct ConnectionDoneEvent
 
 pub enum SessionChange
 {
-    NewConnection
-    {
-        connection: Uuid
-    },
-    NewRequest
-    {
-        connection: Uuid, request: Uuid
-    },
-    Request
-    {
-        request: Uuid
-    },
+    NewConnection,
+    NewRequest,
+    Request,
     NewMessage
     {
-        request: Uuid, part: RequestPart
+        request: Uuid,
+        part: RequestPart,
     },
     Message
     {
-        request: Uuid, part: RequestPart
+        request: Uuid,
+        part: RequestPart,
     },
-    Connection
-    {
-        connection: Uuid
-    },
+    Connection,
 }
 
 impl Session
@@ -138,7 +128,7 @@ impl Session
             status: Status::InProgress,
         };
         self.connections.push(e.uuid, data);
-        vec![SessionChange::NewConnection { connection: e.uuid }]
+        vec![SessionChange::NewConnection]
     }
 
     fn on_new_request(&mut self, e: NewRequestEvent) -> Vec<SessionChange>
@@ -162,10 +152,7 @@ impl Session
             },
         );
         vec![
-            SessionChange::NewRequest {
-                connection: e.connection_uuid,
-                request: e.uuid,
-            },
+            SessionChange::NewRequest,
             SessionChange::NewMessage {
                 request: e.uuid,
                 part: RequestPart::Request,
@@ -230,7 +217,7 @@ impl Session
         if let Some(request) = request {
             request.request_data.end_timestamp = Some(e.timestamp.into());
             request.request_data.status = e.status;
-            vec![SessionChange::Request { request: e.uuid }]
+            vec![SessionChange::Request]
         } else {
             vec![]
         }
@@ -242,7 +229,7 @@ impl Session
         if let Some(conn) = conn {
             conn.end_timestamp = Some(e.timestamp.into());
             conn.status = e.status;
-            vec![SessionChange::Connection { connection: e.uuid }]
+            vec![SessionChange::Connection]
         } else {
             vec![]
         }

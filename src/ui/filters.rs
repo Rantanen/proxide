@@ -271,7 +271,7 @@ impl<T> FilterGroupState<T>
 pub trait ItemFilter<T>
 {
     fn filter_type(&self) -> FilterType;
-    fn key(&self) -> Cow<str>;
+    fn key(&self) -> Cow<'_, str>;
     fn filter(&self, item: &T) -> bool;
     fn to_string(&self, ctx: &UiContext) -> String;
 }
@@ -281,6 +281,7 @@ pub enum FilterType
 {
     Connection,
     Path,
+    #[expect(dead_code, reason = "text search filter is not wired to a command yet")]
     Search,
     Status,
 }
@@ -306,6 +307,7 @@ impl std::fmt::Display for FilterType
     }
 }
 
+#[expect(dead_code, reason = "text search filter is not wired to a command yet")]
 pub struct SearchFilter
 {
     pub pattern: String,
@@ -319,7 +321,7 @@ impl ItemFilter<EncodedRequest> for SearchFilter
         FilterType::Search
     }
 
-    fn key(&self) -> Cow<str>
+    fn key(&self) -> Cow<'_, str>
     {
         Cow::from(&self.pattern)
     }
@@ -349,7 +351,7 @@ impl ItemFilter<EncodedRequest> for ConnectionFilter
         FilterType::Connection
     }
 
-    fn key(&self) -> Cow<str>
+    fn key(&self) -> Cow<'_, str>
     {
         Cow::from(self.connection.to_string())
     }
@@ -380,7 +382,7 @@ impl ItemFilter<EncodedRequest> for PathFilter
         FilterType::Path
     }
 
-    fn key(&self) -> Cow<str>
+    fn key(&self) -> Cow<'_, str>
     {
         Cow::from(&self.path)
     }
@@ -408,7 +410,7 @@ impl ItemFilter<EncodedRequest> for StatusFilter
         FilterType::Status
     }
 
-    fn key(&self) -> Cow<str>
+    fn key(&self) -> Cow<'_, str>
     {
         self.status.to_string().into()
     }
@@ -582,7 +584,7 @@ impl<T> SingleFilterState<T>
         self.filter.to_string(ctx)
     }
 
-    pub fn key(&self) -> Cow<str>
+    pub fn key(&self) -> Cow<'_, str>
     {
         self.filter.key()
     }

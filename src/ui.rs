@@ -56,7 +56,7 @@ pub fn main(
 
     let (ui_tx, ui_rx) = std::sync::mpsc::channel();
 
-    let mut state = ProxideUi::new(session, ui_tx.clone(), decoders, terminal.size().unwrap());
+    let mut state = ProxideUi::new(session, decoders, terminal.size().unwrap());
 
     let toast_tx = ui_tx.clone();
     thread::spawn(move || {

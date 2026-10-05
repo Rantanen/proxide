@@ -12,12 +12,12 @@ use chrono::Duration;
 use tui::style::{Modifier, Style};
 use tui::widgets::{Block, BorderType, Borders};
 
-pub fn create_block(title: &str) -> Block
+pub fn create_block(title: &str) -> Block<'_>
 {
     Block::default().title(title).borders(Borders::ALL)
 }
 
-pub fn create_control_block(title: &str, is_active: bool) -> Block
+pub fn create_control_block(title: &str, is_active: bool) -> Block<'_>
 {
     let b = Block::default().title(title).borders(Borders::ALL);
     match is_active {

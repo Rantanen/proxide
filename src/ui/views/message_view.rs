@@ -46,10 +46,7 @@ impl MessageView
 
     fn get_message<'a>(&self, ctx: &'a UiContext) -> Option<(&'a RequestData, &'a MessageData)>
     {
-        let request = match ctx.data.requests.get_by_uuid(self.request) {
-            Some(r) => r,
-            None => return None,
-        };
+        let request = ctx.data.requests.get_by_uuid(self.request)?;
 
         let data = match self.part {
             RequestPart::Request => &request.request_msg,
@@ -147,10 +144,10 @@ impl<B: Backend> View<B> for MessageView
     fn on_change(&mut self, _ctx: &UiContext, change: &SessionChange) -> bool
     {
         match change {
-            SessionChange::NewConnection { .. } => false,
-            SessionChange::Connection { .. } => false,
-            SessionChange::NewRequest { .. } => false,
-            SessionChange::Request { .. } => false,
+            SessionChange::NewConnection => false,
+            SessionChange::Connection => false,
+            SessionChange::NewRequest => false,
+            SessionChange::Request => false,
             SessionChange::NewMessage { request, part }
             | SessionChange::Message { request, part } => {
                 *part == self.part && *request == self.request

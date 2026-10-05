@@ -100,12 +100,9 @@ impl<B: Backend> View<B> for MainView
 
     fn on_input(&mut self, ctx: &UiContext, e: &CTEvent, size: Rect) -> Option<HandleResult<B>>
     {
-        if self.filter_pane.is_some() && self.filter_pane_active {
+        if let (Some(filter_pane), true) = (self.filter_pane.as_mut(), self.filter_pane_active) {
             let filter = &mut self.requests_state.get_filter_mut(&ctx.data.requests);
-            self.filter_pane
-                .as_mut()
-                .unwrap()
-                .on_active_input(filter, e)
+            filter_pane.on_active_input(filter, e)
         } else {
             self.requests_state
                 .on_active_input(&ctx.data.requests, e, size)
@@ -118,14 +115,14 @@ impl<B: Backend> View<B> for MainView
     fn on_change(&mut self, ctx: &UiContext, change: &SessionChange) -> bool
     {
         match change {
-            SessionChange::NewConnection { .. } => false,
-            SessionChange::Connection { .. } => false,
-            SessionChange::NewRequest { .. } => {
+            SessionChange::NewConnection => false,
+            SessionChange::Connection => false,
+            SessionChange::NewRequest => {
                 self.requests_state
                     .auto_select(&ctx.data.requests, Some(usize::MAX));
                 true
             }
-            SessionChange::Request { .. } => true,
+            SessionChange::Request => true,
             SessionChange::NewMessage { request: req, .. }
             | SessionChange::Message { request: req, .. } => self
                 .requests_state

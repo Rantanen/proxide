@@ -1,14 +1,12 @@
 use crossterm::event::{Event as CTEvent, KeyCode};
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::sync::mpsc::Sender;
 use tui::backend::Backend;
-use tui::buffer::Buffer;
 use tui::layout::Rect;
 use tui::style::{Color, Style};
 use tui::terminal::Frame;
 use tui::text::Text;
-use tui::widgets::{Block, Borders, Clear, Paragraph, Widget, Wrap};
+use tui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 use uuid::Uuid;
 
 use super::toast::ToastEvent;
@@ -46,7 +44,6 @@ pub struct Runtime
 {
     pub decoders: Decoders,
     pub search_index: Rc<RefCell<search::SearchIndex>>,
-    pub tx: Sender<UiEvent>,
 }
 
 pub struct UiContext
@@ -67,7 +64,7 @@ pub enum HandleResult<B: Backend>
 
 impl<B: Backend> ProxideUi<B>
 {
-    pub fn new(session: Session, tx: Sender<UiEvent>, decoders: Decoders, size: Rect) -> Self
+    pub fn new(session: Session, decoders: Decoders, size: Rect) -> Self
     {
         Self {
             context: UiContext {
@@ -76,7 +73,6 @@ impl<B: Backend> ProxideUi<B>
                         &session, &decoders,
                     ))),
                     decoders,
-                    tx,
                 },
                 data: session,
                 size,
@@ -315,21 +311,6 @@ impl Toast
     }
 }
 
-pub struct ProxideTable<T>
-{
-    phantom: std::marker::PhantomData<T>,
-}
-
-impl<T> Default for ProxideTable<T>
-{
-    fn default() -> Self
-    {
-        Self {
-            phantom: std::marker::PhantomData::<T>,
-        }
-    }
-}
-
 impl std::fmt::Display for Status
 {
     fn fmt(&self, w: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error>
@@ -339,20 +320,5 @@ impl std::fmt::Display for Status
             Status::Succeeded => write!(w, "OK"),
             Status::Failed => write!(w, "Fail"),
         }
-    }
-}
-
-pub struct TextLine<'a>(pub &'a str);
-impl<'a> Widget for TextLine<'a>
-{
-    fn render(self, area: Rect, buf: &mut Buffer)
-    {
-        buf.set_stringn(
-            area.x,
-            area.y,
-            self.0,
-            area.width as usize,
-            Style::default(),
-        );
     }
 }

@@ -9,7 +9,18 @@
 ## Installation
 
 See the [releases](https://github.com/Rantanen/proxide/releases) page for
-binary releases for Windows and Linux.
+binary releases for Windows and Linux:
+
+| Platform       | Asset                                               |
+|----------------|-----------------------------------------------------|
+| Windows (x64)  | `proxide-<version>-x86_64-pc-windows-msvc.zip`      |
+| Linux (x86-64) | `proxide-<version>-x86_64-unknown-linux-gnu.tar.gz` |
+
+Each asset has a matching `.sha256` checksum file.
+
+The Windows binary requires the
+[Microsoft Visual C++ Redistributable](https://learn.microsoft.com/cpp/windows/latest-supported-vc-redist)
+(x64), which is already present on most development machines.
 
 Proxide can also be installed directly from `crates.io` with:
 
@@ -106,9 +117,16 @@ certificate is through the `config ca` command.
 > proxide config ca --create
 > ```
 
-This command creates a `proxide_ca.crt` and `proxide_ca.key` pair. If these
-files exist, Proxide will automatically use them when monitoring or capturing
-traffic.
+This command creates a `proxide_ca.crt` and `proxide_ca.key` pair. Proxide
+uses them when monitoring or capturing traffic, and refuses to start if they
+are missing. Use `--ca-cert` and `--ca-key` to point to CA files elsewhere,
+or `--no-ca` to run without TLS interception.
+
+Clients must send the server name (SNI) in the TLS handshake. Proxide uses it
+to generate the server certificate. Connections without SNI are dropped.
+
+If connections fail, run Proxide with `--log proxide.log` and check the log
+for the reason.
 
 The second obstacle is ensuring the client won't reject the server certificates
 Proxide creates. This can be done by having the client ignore certificate

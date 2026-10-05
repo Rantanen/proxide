@@ -100,18 +100,6 @@ fn main()
 
 fn proxide_main() -> Result<(), Error>
 {
-    #[cfg(debug_assertions)]
-    {
-        simplelog::WriteLogger::init(
-            simplelog::LevelFilter::Trace,
-            simplelog::ConfigBuilder::new()
-                .add_filter_allow("proxide".to_string())
-                .build(),
-            std::fs::File::create("trace.log").unwrap(),
-        )
-        .unwrap();
-    }
-
     let commit = option_env!("GITHUB_SHA")
         .map(|c| &c[..7])
         .unwrap_or("dev build");
@@ -122,6 +110,7 @@ fn proxide_main() -> Result<(), Error>
     // to set up the complex bits. Anything handled here should `return` out of the function to
     // prevent the more complex bits from being performed.
     let matches = app.get_matches();
+    init_log(&matches)?;
     match matches.subcommand() {
         Some(("config", matches)) => return config::run(matches),
         Some(("view", matches)) if matches.is_present("json") => return json::view(matches),
@@ -230,6 +219,36 @@ fn proxide_main() -> Result<(), Error>
     Ok(())
 }
 
+fn init_log(matches: &ArgMatches) -> Result<(), Error>
+{
+    // Debug builds always log everything into 'trace.log' unless the user asked for another file.
+    let (path, level) = match matches.value_of("log") {
+        Some(path) => {
+            let level = matches
+                .value_of("log-level")
+                .unwrap()
+                .parse()
+                .expect("clap validates the log level");
+            (path, level)
+        }
+        None if cfg!(debug_assertions) => ("trace.log", simplelog::LevelFilter::Trace),
+        None => return Ok(()),
+    };
+
+    let file = File::create(path).map_err(|e| Error::ArgumentError {
+        msg: format!("Could not create log file '{}': {}", path, e),
+    })?;
+    simplelog::WriteLogger::init(
+        level,
+        simplelog::ConfigBuilder::new()
+            .add_filter_allow("proxide".to_string())
+            .build(),
+        file,
+    )
+    .expect("logger is initialized only once");
+    Ok(())
+}
+
 impl ConnectionOptions
 {
     fn resolve(args: &ArgMatches) -> Result<Arc<Self>, Error>
@@ -257,15 +276,38 @@ impl ConnectionOptions
 
     fn read_cert(args: &ArgMatches) -> Result<Option<CADetails>, Error>
     {
+        if args.is_present("no-ca") {
+            return Ok(None);
+        }
+
         let cert = args.value_of("ca-certificate").unwrap_or("proxide_ca.crt");
         let key = args.value_of("ca-key").unwrap_or("proxide_ca.key");
 
-        // Handle the case where the user didn't explicilty require the CA
-        // certificates and the default ones don't exist.
-        if (!Path::new(cert).is_file() || !Path::new(key).is_file())
-            && (args.occurrences_of("ca-certificate") == 0 && args.occurrences_of("ca-key") == 0)
-        {
-            return Ok(None);
+        // Running without the CA is almost never what the user wants, as TLS connections would
+        // fail with nothing on screen, so require the user to opt out of it explicitly.
+        let missing: Vec<_> = [("certificate", cert), ("private key", key)]
+            .iter()
+            .filter(|(_, path)| !Path::new(path).is_file())
+            .map(|(what, path)| format!("  CA {} '{}' not found", what, path))
+            .collect();
+        if !missing.is_empty() {
+            let mut create = String::from("proxide config ca --create");
+            if let Some(cert) = args.value_of("ca-certificate") {
+                create += &format!(" --ca-cert {}", cert);
+            }
+            if let Some(key) = args.value_of("ca-key") {
+                create += &format!(" --ca-key {}", key);
+            }
+            return Err(Error::ArgumentError {
+                msg: format!(
+                    "{}\n\n\
+                    TLS interception requires a CA certificate. Create one with:\n\n  \
+                    {}\n\n\
+                    or use --no-ca to run without TLS interception.",
+                    missing.join("\n"),
+                    create
+                ),
+            });
         }
 
         let mut cert_data = String::new();
@@ -352,7 +394,7 @@ async fn launch_proxide(
 
     let mut sockets: Vec<_> = Vec::new();
     for addr in addresses {
-        let addr = format!("{}:{}", addr, &options.listen_port);
+        let addr = format!("{}:{}", addr, options.listen_port);
         match TcpListener::bind(&addr).await {
             Err(_) => log::error!("Could not bind to {}", addr),
             Ok(s) => sockets.push(s),

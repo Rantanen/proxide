@@ -6,45 +6,54 @@ on:
     branches:
       - 'release-test-[0-9]+.[0-9]+.[0-9]+'
 
+permissions:
+  contents: write
+
+env:
+  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  GH_REPO: ${{ github.repository }}
 
 jobs:
 
-  # This job is responsible for creating the release _once_ for each tag.
+  # This job is responsible for creating the (draft) release _once_ for each tag.
   create-release:
     name: Create release
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      real_release: ${{ steps.version.outputs.real_release }}
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@v7
 
       - name: Get release version
+        id: version
         run: |
           echo "Ref: $GITHUB_REF"
           ref_no_tag=${GITHUB_REF#refs/tags/}
-          echo "No tag: $ref_no_tag"
           proxide_version=${ref_no_tag#refs/heads/release-test-}
-
-          echo "Final: $proxide_version"
-          echo "PROXIDE_VERSION=${proxide_version}" >> $GITHUB_ENV
           echo "Version: ${proxide_version}"
-
+          echo "version=${proxide_version}" >> $GITHUB_OUTPUT
 
           if [[ $GITHUB_REF == *"release-test"* ]]; then
+            # Test releases stay as drafts; a draft release does not create the tag.
             echo "Release test"
-            echo "REAL_RELEASE=false" >> $GITHUB_ENV
+            echo "tag=test-${proxide_version}" >> $GITHUB_OUTPUT
+            echo "real_release=false" >> $GITHUB_OUTPUT
           else
             echo "Normal release"
-            echo "REAL_RELEASE=true" >> $GITHUB_ENV
+            echo "tag=${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
+            echo "real_release=true" >> $GITHUB_OUTPUT
           fi
-
 
       - name: Version check
         run: |
           toml_version="$(head Cargo.toml | grep "^version" | sed 's/.*"\(.*\)".*/\1/')"
-          if [ "$toml_version" != "${{ env.PROXIDE_VERSION }}" ]; then
+          if [ "$toml_version" != "${{ steps.version.outputs.version }}" ]; then
             echo "Version mismatch!"
-            echo "Tag:   ${{ env.PROXIDE_VERSION }}"
+            echo "Tag:   ${{ steps.version.outputs.version }}"
             echo "Crate: $toml_version"
             exit 1
           else
@@ -52,69 +61,44 @@ jobs:
           fi
 
       - name: Create GitHub release
-        id: release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: ${{ github.ref }}
-          release_name: ${{ env.PROXIDE_VERSION }}
-          body: |
-            See the [commit log](https://github.com/Rantanen/proxide/commits/${{ github.sha }}) for recent changes.
-
-      - name: Create artifacts
         run: |
-          mkdir artifacts
-          echo "${{ env.REAL_RELEASE }}" > artifacts/real-release
-          echo "${{ steps.release.outputs.upload_url }}" > artifacts/release-upload-url
-          echo "${{ env.PROXIDE_VERSION }}" > artifacts/release-version
+          cat > notes.md <<'EOF'
+          See the [commit log](${{ github.server_url }}/${{ github.repository }}/commits/${{ github.sha }}) for recent changes.
 
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v1
-        with:
-          name: artifacts
-          path: artifacts
+          The Windows build requires the [Microsoft Visual C++ Redistributable](https://learn.microsoft.com/cpp/windows/latest-supported-vc-redist) (x64).
+          EOF
+          gh release create "${{ steps.version.outputs.tag }}" \
+            --draft \
+            --target "${{ github.sha }}" \
+            --title "${{ steps.version.outputs.version }}" \
+            --notes-file notes.md
 
   # This job builds each release and uploads the artifacts to the release
   # created during the create-release job.
   build-release:
-    name: Build release
+    name: Build release (${{ matrix.target }})
     needs: ['create-release']
     env:
       RUST_BACKTRACE: 1
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os:
-          - ubuntu-latest
-          - windows-2019
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            exe: proxide
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            exe: proxide.exe
     steps:
 
-      - name: Get release details
-        uses: actions/download-artifact@v1
-        with:
-          name: artifacts
-          path: artifacts
-
-      - name: Read release details
-        shell: bash
-        run: |
-          release_upload_url="$(cat artifacts/release-upload-url)"
-          echo "RELEASE_UPLOAD_URL=$release_upload_url" >> $GITHUB_ENV
-          release_version="$(cat artifacts/release-version)"
-          echo "RELEASE_VERSION=$release_version" >> $GITHUB_ENV
-          echo "Release upload url: $release_upload_url"
-          echo "Release version: $release_version"
-
       - name: Checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@v7
 
       - name: Install toolchain
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: stable
-          profile: minimal
-          override: true
+          targets: ${{ matrix.target }}
 
       - name: Environment
         run: |
@@ -123,70 +107,53 @@ jobs:
 
       - name: Build release
         run: |
-          cargo build --release
+          cargo build --release --target ${{ matrix.target }}
 
       - name: Gather artifacts
         shell: bash
         run: |
-          target="proxide-${{ env.RELEASE_VERSION }}"
-          asset_name="proxide-${{ env.RELEASE_VERSION }}"
+          name="proxide-${{ needs.create-release.outputs.version }}-${{ matrix.target }}"
 
-          mkdir -p $target
-
-          cp {README.md,LICENSE-MIT,LICENSE-APACHE} $target
+          mkdir -p "$name"
+          cp {README.md,LICENSE-MIT,LICENSE-APACHE} "$name"
+          cp "target/${{ matrix.target }}/release/${{ matrix.exe }}" "$name"
 
           if [ "$RUNNER_OS" == "Windows" ]; then
-            cp target/release/proxide.exe $target
-            7z a "$asset_name.zip" $target
-            echo "ASSET=$asset_name.zip" >> $GITHUB_ENV
+            asset="$name.zip"
+            7z a "$asset" "$name"
           else
-            cp target/release/proxide $target
-            tar czf "$asset_name.tar.gz" $target
-            echo "ASSET=$asset_name.tar.gz" >> $GITHUB_ENV
+            asset="$name.tar.gz"
+            tar czf "$asset" "$name"
           fi
+          sha256sum "$asset" > "$asset.sha256"
 
-      - name: Upload release
-        uses: actions/upload-release-asset@v1.0.1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ env.RELEASE_UPLOAD_URL }}
-          asset_path: ${{ env.ASSET }}
-          asset_name: ${{ env.ASSET }}
-          asset_content_type: application/octet-stream
+          echo "ASSET=$asset" >> $GITHUB_ENV
+
+      - name: Upload release assets
+        shell: bash
+        run: |
+          gh release upload "${{ needs.create-release.outputs.tag }}" \
+            "$ASSET" "$ASSET.sha256" --clobber
 
   publish-release:
     name: Publish release
-    needs: ['build-release']
+    needs: ['create-release', 'build-release']
+    if: needs.create-release.outputs.real_release == 'true'
     env:
       RUST_BACKTRACE: 1
     runs-on: ubuntu-latest
     steps:
 
-      - name: Get release details
-        uses: actions/download-artifact@v1
-        with:
-          name: artifacts
-          path: artifacts
-
-      - name: Read release details
-        shell: bash
-        run: |
-          real_release="$(cat artifacts/real-release)"
-          echo "Real release: $real_release"
-          echo "REAL_RELEASE=$real_release" >> $GITHUB_ENV
-
       - name: Checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@v7
 
       - name: Install toolchain
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-          profile: minimal
-          override: true
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Publish GitHub release
+        run: |
+          gh release edit "${{ needs.create-release.outputs.tag }}" --draft=false
 
       - name: Publish to crates.io
-        if: env.REAL_RELEASE == 'true'
         run: |
           cargo publish --token "${{ secrets.crates_io }}"

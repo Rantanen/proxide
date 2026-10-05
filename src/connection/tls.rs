@@ -277,7 +277,9 @@ fn get_certificate(
     let ca_params = rcgen::CertificateParams::from_ca_cert_pem(&ca.certificate, ca_key).unwrap();
     let ca_cert = rcgen::Certificate::from_params(ca_params).unwrap();
 
-    let mut cert_params = rcgen::CertificateParams::new(vec![]);
+    // Clients such as Go (grpcurl) and browsers ignore the common name and only match
+    // the host against the subject alternative names.
+    let mut cert_params = rcgen::CertificateParams::new(vec![common_name.to_string()]);
     cert_params.use_authority_key_identifier_extension = false;
     cert_params.distinguished_name = rcgen::DistinguishedName::new();
     cert_params.distinguished_name.push(
@@ -294,4 +296,53 @@ fn get_certificate(
         )],
         rustls::PrivateKey(cert.serialize_private_key_der()),
     )
+}
+
+#[cfg(test)]
+mod test
+{
+    use super::*;
+    use rustls::client::WebPkiVerifier;
+    use std::time::SystemTime;
+
+    fn test_ca() -> (CADetails, rustls::RootCertStore)
+    {
+        let mut params = rcgen::CertificateParams::new(vec![]);
+        params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+        params
+            .distinguished_name
+            .push(rcgen::DnType::CommonName, "Proxide Test CA");
+        let cert = rcgen::Certificate::from_params(params).unwrap();
+
+        let mut roots = rustls::RootCertStore::empty();
+        roots
+            .add(&rustls::Certificate(cert.serialize_der().unwrap()))
+            .unwrap();
+        let ca = CADetails {
+            certificate: cert.serialize_pem().unwrap(),
+            key: cert.serialize_private_key_pem(),
+        };
+        (ca, roots)
+    }
+
+    fn verify(host: &str) -> std::result::Result<ServerCertVerified, rustls::Error>
+    {
+        let (ca, roots) = test_ca();
+        let (chain, _) = get_certificate(host, &ca);
+        WebPkiVerifier::new(roots, None).verify_server_cert(
+            &chain[0],
+            &[],
+            &ServerName::try_from(host).unwrap(),
+            &mut std::iter::empty(),
+            &[],
+            SystemTime::now(),
+        )
+    }
+
+    #[test]
+    fn certificate_is_valid_for_dns_name()
+    {
+        verify("localhost").expect("certificate should be valid for 'localhost'");
+        verify("example.com").expect("certificate should be valid for 'example.com'");
+    }
 }

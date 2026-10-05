@@ -24,7 +24,7 @@ impl Decoder for RawDecoder
         "raw"
     }
 
-    fn decode(&self, msg: &MessageData) -> Text
+    fn decode(&self, msg: &MessageData) -> Text<'_>
     {
         Text::raw(format!("{:?}", msg.content))
     }

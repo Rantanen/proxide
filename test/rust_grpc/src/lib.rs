@@ -1,3 +1,8 @@
+#![allow(
+    clippy::result_large_err,
+    reason = "tonic service APIs and generated code return the large tonic::Status error"
+)]
+
 use crate::server::GrpcServer;
 pub use rust_grpc::{
     ClientProcess, DiagnosticsRequest, DiagnosticsResponse, SendMessageRequest, SendMessageResponse,
@@ -226,6 +231,6 @@ mod test
             .expect("Retrieving statistics failed.");
         assert_eq!(statistics.clients.len(), 1);
         assert_eq!(statistics.clients[0].id, std::process::id());
-        assert!(statistics.clients[0].threads.len() > 0);
+        assert!(!statistics.clients[0].threads.is_empty());
     }
 }

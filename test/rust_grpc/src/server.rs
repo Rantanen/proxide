@@ -1,3 +1,8 @@
+#![allow(
+    clippy::result_large_err,
+    reason = "tonic service APIs and generated code return the large tonic::Status error"
+)]
+
 use atomic_counter::AtomicCounter;
 use clap::Parser;
 use rust_grpc_private::test_service_server::{TestService, TestServiceServer};
@@ -93,7 +98,7 @@ impl GrpcServer
     /// Gets the HTTP address of the server.
     pub fn http(&self) -> String
     {
-        format!("http://{}", &self.address)
+        format!("http://{}", self.address)
     }
 
     /// Stops the gRPC server.
@@ -248,14 +253,12 @@ impl TestService for LocalTestService
         // Collect the client info.
         let process_id = request.metadata().get("proxide-client-process-id");
         let thread_id = request.metadata().get("proxide-client-thread-id");
-        if process_id.is_some() && thread_id.is_some() {
+        if let (Some(process_id), Some(thread_id)) = (process_id, thread_id) {
             let threads = self.clients.get_or_insert(
-                number_from_client(process_id.unwrap())?,
+                number_from_client(process_id)?,
                 crossbeam_skiplist::SkipSet::new(),
             );
-            threads
-                .value()
-                .insert(number_from_client(thread_id.unwrap())?);
+            threads.value().insert(number_from_client(thread_id)?);
         }
         Ok(Response::new(SendMessageResponse {}))
     }

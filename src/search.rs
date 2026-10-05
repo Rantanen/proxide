@@ -51,6 +51,7 @@ impl SearchIndex
         idx
     }
 
+    #[expect(dead_code, reason = "text search filter is not wired to a command yet")]
     pub fn is_match(&self, request: Uuid, pattern: &str) -> bool
     {
         self.requests

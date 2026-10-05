@@ -1,4 +1,9 @@
-use clap::{arg, Parser};
+#![allow(
+    clippy::result_large_err,
+    reason = "tonic service APIs and generated code return the large tonic::Status error"
+)]
+
+use clap::Parser;
 use rust_grpc_private::DiagnosticsRequest;
 use rust_grpc_private::{SendMessageRequest, WaitForFirstMessageRequest};
 use std::{thread, time};

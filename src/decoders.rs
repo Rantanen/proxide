@@ -1,6 +1,5 @@
-use http::header::{HeaderName, HeaderValue};
 use snafu::Snafu;
-use tui::text::{Span, Spans, Text};
+use tui::text::Text;
 
 use crate::session::{MessageData, RequestData};
 
@@ -86,58 +85,6 @@ pub trait DecoderFactory
 pub trait Decoder
 {
     fn name(&self) -> &'static str;
-    fn decode(&self, msg: &MessageData) -> Text;
+    fn decode(&self, msg: &MessageData) -> Text<'_>;
     fn index(&self, msg: &MessageData) -> Vec<String>;
-}
-
-struct HeaderDecoder;
-impl Decoder for HeaderDecoder
-{
-    fn name(&self) -> &'static str
-    {
-        "headers"
-    }
-
-    fn decode(&self, msg: &MessageData) -> Text
-    {
-        Text::from(self.process(
-            msg,
-            |s| Some(Spans::from(Span::raw(s))),
-            |k, v| Spans::from(Span::raw(format!(" - {}: {:?}\n", k, v))),
-        ))
-    }
-
-    fn index(&self, msg: &MessageData) -> Vec<String>
-    {
-        self.process(msg, |_| None, |k, v| format!("{}: {:?}", k, v))
-    }
-}
-
-impl HeaderDecoder
-{
-    fn process<T>(
-        &self,
-        msg: &MessageData,
-        title: fn(&'static str) -> Option<T>,
-        ctor: fn(&HeaderName, &HeaderValue) -> T,
-    ) -> Vec<T>
-    {
-        let mut output = vec![];
-
-        if !msg.headers.is_empty() {
-            output.extend(title("Headers\n"));
-            for (k, v) in &msg.headers {
-                output.push(ctor(k, v));
-            }
-        }
-
-        if !msg.trailers.is_empty() {
-            output.extend(title("\nTrailers\n"));
-            for (k, v) in &msg.trailers {
-                output.push(ctor(k, v));
-            }
-        }
-
-        output
-    }
 }

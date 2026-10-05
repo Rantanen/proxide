@@ -6,13 +6,36 @@ macro_rules! long {
     };
 }
 
-pub fn setup_app(version: &str) -> App
+pub fn setup_app(version: &str) -> App<'_>
 {
     App::new("Proxide - HTTP2 debugging proxy")
         .version(version)
         .author("Mikko Rantanen <rantanen@jubjubnest.net>")
         .setting(AppSettings::SubcommandRequiredElseHelp)
         .global_setting(AppSettings::UnifiedHelpMessage)
+        .arg(
+            Arg::with_name("log")
+                .long("log")
+                .value_name("file")
+                .global(true)
+                .help("Write a diagnostic log into the specified file")
+                .long_help(long!(
+                    "\
+Write a diagnostic log into the specified file. The log contains details that are not shown in the
+UI, such as the reasons why client or server connections failed. Useful for troubleshooting TLS
+interception issues."
+                )),
+        )
+        .arg(
+            Arg::with_name("log-level")
+                .long("log-level")
+                .value_name("level")
+                .global(true)
+                .requires("log")
+                .possible_values(["error", "warn", "info", "debug", "trace"])
+                .default_value("debug")
+                .help("Specify the log level used with --log"),
+        )
         .subcommand(
             SubCommand::with_name("view")
                 .about("View traffic from a session or capture file")
@@ -67,6 +90,7 @@ long periods with the only limit being the disk usage."
         .subcommand(
             SubCommand::with_name("config")
                 .about("Manage Proxide configuration")
+                .setting(AppSettings::SubcommandRequiredElseHelp)
                 // The "config ca" subcommand.
                 .subcommand(
                     SubCommand::with_name("ca")
@@ -285,7 +309,8 @@ Specify the CA certificate path. Defaults to 'proxide_ca.crt' if not specified.
 
 The CA certificate is used to produce temporary certificates for incoming TLS connections. This is
 required for intercepting TLS traffic from the clients. For the TLS interception to succeed, the
-clients must trust certificates signed by the specified CA certificate."
+clients must trust certificates signed by the specified CA certificate. A new CA certificate can be
+created with 'proxide config ca --create'."
                 )),
                 key.long_help(long!(
                     "\
@@ -296,7 +321,22 @@ certificates."
                 )),
             ),
         };
-        self.app().arg(cert).arg(key)
+        let app = self.app().arg(cert).arg(key);
+        match connection {
+            false => app,
+            true => app.arg(
+                Arg::with_name("no-ca")
+                    .long("no-ca")
+                    .conflicts_with_all(&["ca-certificate", "ca-key"])
+                    .help("Run without a CA certificate. TLS connections cannot be intercepted.")
+                    .long_help(long!(
+                        "\
+Run without a CA certificate. Proxide will reject any TLS connections, as it cannot generate
+certificates for them. Without this option Proxide refuses to start if the CA certificate or
+private key is missing."
+                    )),
+            ),
+        }
     }
 
     fn json_options(self) -> App<'a>
