@@ -164,3 +164,29 @@ missing.
   headers.
 - [ ] Support HTTP/1.x upgrades
 - [ ] HTTP/1.x support
+
+## Releasing
+
+Releases are built by the [Release workflow](.github/workflows/release.yml).
+
+1. Update `version` in `Cargo.toml` and commit it to `master`. Keep the
+   `version` line near the top of the file, as the workflow reads it from
+   there.
+2. Optional: do a test run by pushing to a `release-test-X.Y.Z` branch:
+   ```
+   git push origin master:release-test-0.2.4
+   ```
+   This builds the binaries into a draft release tagged `test-0.2.4`. Nothing
+   is published to GitHub or crates.io. Delete the draft release and the branch
+   when done.
+3. Push a tag matching the version:
+   ```
+   git tag 0.2.4
+   git push origin 0.2.4
+   ```
+   The workflow checks that the tag matches `Cargo.toml` and builds the Linux
+   and Windows archives with their `.sha256` files. It then publishes the
+   GitHub release and runs `cargo publish`.
+
+Publishing to crates.io needs a crates.io API token in the `crates_io`
+repository secret.
