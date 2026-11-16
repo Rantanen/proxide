@@ -1,12 +1,12 @@
 use rustls::{
-    client::{ServerCertVerified, ServerCertVerifier, ServerName},
-    server::{ClientHello, ResolvesServerCert},
-    sign::CertifiedKey,
-    Certificate, ClientConfig, ServerConfig,
+    client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier},
+    crypto::{ring, CryptoProvider, WebPkiSupportedAlgorithms},
+    pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer, ServerName, UnixTime},
+    server::Acceptor,
+    ClientConfig, DigitallySignedStruct, ServerConfig, SignatureScheme,
 };
 use std::convert::TryFrom;
-use std::sync::mpsc;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
 use tokio_rustls::{TlsAcceptor, TlsConnector};
 
@@ -70,9 +70,17 @@ where
 
     // We'll avoid validating the server certificates, since we don't really know what certs the
     // client trusts.
-    let mut server_stream_config = ClientConfig::builder()
-        .with_safe_defaults()
-        .with_custom_certificate_verifier(Arc::new(NoVerify))
+    let provider = crypto_provider();
+    let mut server_stream_config = ClientConfig::builder_with_provider(provider.clone())
+        .with_safe_default_protocol_versions()
+        .context(TlsError {})
+        .context(ServerError {
+            scenario: "configuring TLS",
+        })?
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::new(NoVerify {
+            algorithms: provider.signature_verification_algorithms,
+        }))
         .with_no_client_auth();
     server_stream_config.alpn_protocols = alpn;
     let server_stream_config = TlsConnector::from(Arc::new(server_stream_config));
@@ -84,7 +92,7 @@ where
     );
     let server_stream = server_stream_config
         .connect(
-            ServerName::try_from(outgoing_sni.as_ref())
+            ServerName::try_from(outgoing_sni)
                 .context(DNSError {})
                 .context(ConfigurationError {
                     reason: "Invalid target server",
@@ -109,11 +117,18 @@ where
     log::debug!("{} - Creating certificate for '{}'", details.uuid, &sni);
     let (cert_chain, private_key) = get_certificate(&sni, ca);
 
-    let mut client_stream_config = ServerConfig::builder()
-        .with_safe_defaults()
+    let mut client_stream_config = ServerConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()
+        .context(TlsError {})
+        .context(ClientError {
+            scenario: "configuring TLS",
+        })?
         .with_no_client_auth()
         .with_single_cert(cert_chain, private_key)
-        .unwrap();
+        .context(TlsError {})
+        .context(ClientError {
+            scenario: "configuring TLS",
+        })?;
     if let Some(alpn) = alpn {
         client_stream_config.alpn_protocols = vec![alpn.to_vec()];
     }
@@ -136,46 +151,63 @@ where
     })
 }
 
-struct ClientHelloData
+/// The crypto provider used for both sides of the intercepted connection.
+///
+/// Proxide uses the `ring` provider explicitly instead of relying on the process-wide default,
+/// which rustls would otherwise choose based on the enabled crate features.
+fn crypto_provider() -> Arc<CryptoProvider>
 {
-    sni: Option<String>,
-    alpn: Vec<Vec<u8>>,
-}
-struct ClientHelloCapture
-{
-    channel: Mutex<mpsc::Sender<ClientHelloData>>,
-}
-impl ResolvesServerCert for ClientHelloCapture
-{
-    fn resolve(&self, client_hello: ClientHello) -> Option<Arc<CertifiedKey>>
-    {
-        log::trace!("Capturing ClientHello from cert resolver");
-        let _ = self.channel.lock().unwrap().send(ClientHelloData {
-            sni: client_hello.server_name().map(|m| m.to_owned()),
-            alpn: client_hello
-                .alpn()
-                .into_iter()
-                .flat_map(|arr| arr.map(|v| v.to_owned()).collect::<Vec<_>>())
-                .collect::<Vec<_>>(),
-        });
-        None
-    }
+    Arc::new(ring::default_provider())
 }
 
-struct NoVerify;
+/// Server certificate verifier that accepts any certificate.
+///
+/// Proxide doesn't know which certificates the client would trust, so it can't validate the
+/// server's certificate chain. Handshake signatures are still verified so that the TLS session
+/// itself is sound.
+#[derive(Debug)]
+struct NoVerify
+{
+    algorithms: WebPkiSupportedAlgorithms,
+}
+
 impl ServerCertVerifier for NoVerify
 {
     fn verify_server_cert(
         &self,
-        _end_entity: &Certificate,
-        _intermediates: &[Certificate],
-        _server_name: &ServerName,
-        _scts: &mut dyn Iterator<Item = &[u8]>,
+        _end_entity: &CertificateDer<'_>,
+        _intermediates: &[CertificateDer<'_>],
+        _server_name: &ServerName<'_>,
         _ocsp_response: &[u8],
-        _now: std::time::SystemTime,
-    ) -> Result<ServerCertVerified, rustls::Error>
+        _now: UnixTime,
+    ) -> std::result::Result<ServerCertVerified, rustls::Error>
     {
         Ok(ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> std::result::Result<HandshakeSignatureValid, rustls::Error>
+    {
+        rustls::crypto::verify_tls12_signature(message, cert, dss, &self.algorithms)
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> std::result::Result<HandshakeSignatureValid, rustls::Error>
+    {
+        rustls::crypto::verify_tls13_signature(message, cert, dss, &self.algorithms)
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<SignatureScheme>
+    {
+        self.algorithms.supported_schemes()
     }
 }
 
@@ -190,23 +222,13 @@ async fn resolve_client_hello<TStream>(client: &mut TStream) -> Result<HelloResu
 where
     TStream: AsyncRead + Unpin,
 {
-    let (sender, receiver) = mpsc::channel();
-    let config = ServerConfig::builder()
-        .with_safe_defaults()
-        .with_no_client_auth()
-        .with_cert_resolver(Arc::new(ClientHelloCapture {
-            channel: Mutex::new(sender),
-        }));
-    let mut hello_session = rustls::ServerConnection::new(Arc::new(config))
-        .context(TlsError {})
-        .context(ClientError {
-            scenario: "Connecting to server",
-        })?;
-
-    // Process data until we get the ClientHello.
+    // Feed the client bytes to a rustls `Acceptor` until it has parsed the ClientHello. The bytes
+    // are also kept so they can be replayed to the real TLS acceptor once the certificate for the
+    // requested server name has been generated.
+    let mut acceptor = Acceptor::default();
     let mut hello_data: Vec<u8> = Vec::new();
     let mut buffer = [0_u8; 2048];
-    let ClientHelloData { sni, alpn } = loop {
+    let (sni, alpn) = loop {
         log::trace!("Waiting for client bytes for ClientHello");
         let read = client
             .read(&mut buffer)
@@ -226,27 +248,35 @@ where
         log::trace!("Got {} bytes for ClientHello: {:?}", read, &buffer[..read]);
 
         hello_data.extend(packet);
-        hello_session
-            .read_tls(&mut packet)
-            .context(IoError {})
-            .context(ClientError {
-                scenario: "parsing ClientHello",
-            })?;
-
-        // Process packets and immediately follow that by checking if the ClientHello arrived. Our
-        // `cert_resolver` doesn't really know how to do its job so it will cause a TLS error, but
-        // if we got the ClientHello before that, we're good!
-        let process_result = hello_session.process_new_packets();
-        if let Ok(tuple) = receiver.try_recv() {
-            break tuple;
+        while !packet.is_empty() {
+            acceptor
+                .read_tls(&mut packet)
+                .context(IoError {})
+                .context(ClientError {
+                    scenario: "parsing ClientHello",
+                })?;
         }
 
-        // No ClientHello yet. Handle the result as normal.
-        process_result
-            .context(super::TlsError {})
-            .context(ClientError {
-                scenario: "parsing ClientHello",
-            })?;
+        match acceptor.accept() {
+            Ok(Some(accepted)) => {
+                let hello = accepted.client_hello();
+                break (
+                    hello.server_name().map(str::to_owned),
+                    hello
+                        .alpn()
+                        .into_iter()
+                        .flatten()
+                        .map(<[u8]>::to_vec)
+                        .collect::<Vec<_>>(),
+                );
+            }
+            Ok(None) => continue,
+            Err((e, _alert)) => {
+                return Err(e).context(super::TlsError {}).context(ClientError {
+                    scenario: "parsing ClientHello",
+                })
+            }
+        }
     };
 
     let sni = match sni {
@@ -271,15 +301,14 @@ where
 fn get_certificate(
     common_name: &str,
     ca: &CADetails,
-) -> (Vec<rustls::Certificate>, rustls::PrivateKey)
+) -> (Vec<CertificateDer<'static>>, PrivateKeyDer<'static>)
 {
     let ca_key = rcgen::KeyPair::from_pem(&ca.key).unwrap();
-    let ca_params = rcgen::CertificateParams::from_ca_cert_pem(&ca.certificate, ca_key).unwrap();
-    let ca_cert = rcgen::Certificate::from_params(ca_params).unwrap();
+    let issuer = rcgen::Issuer::from_ca_cert_pem(&ca.certificate, ca_key).unwrap();
 
     // Clients such as Go (grpcurl) and browsers ignore the common name and only match
     // the host against the subject alternative names.
-    let mut cert_params = rcgen::CertificateParams::new(vec![common_name.to_string()]);
+    let mut cert_params = rcgen::CertificateParams::new(vec![common_name.to_string()]).unwrap();
     cert_params.use_authority_key_identifier_extension = false;
     cert_params.distinguished_name = rcgen::DistinguishedName::new();
     cert_params.distinguished_name.push(
@@ -289,12 +318,11 @@ fn get_certificate(
     cert_params
         .distinguished_name
         .push(rcgen::DnType::CommonName, common_name);
-    let cert = rcgen::Certificate::from_params(cert_params).unwrap();
+    let key = rcgen::KeyPair::generate().unwrap();
+    let cert = cert_params.signed_by(&key, &issuer).unwrap();
     (
-        vec![rustls::Certificate(
-            cert.serialize_der_with_signer(&ca_cert).unwrap(),
-        )],
-        rustls::PrivateKey(cert.serialize_private_key_der()),
+        vec![cert.der().clone()],
+        PrivatePkcs8KeyDer::from(key.serialize_der()).into(),
     )
 }
 
@@ -302,41 +330,41 @@ fn get_certificate(
 mod test
 {
     use super::*;
-    use rustls::client::WebPkiVerifier;
-    use std::time::SystemTime;
+    use rustls::client::WebPkiServerVerifier;
 
     fn test_ca() -> (CADetails, rustls::RootCertStore)
     {
-        let mut params = rcgen::CertificateParams::new(vec![]);
+        let mut params = rcgen::CertificateParams::new(vec![]).unwrap();
         params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
         params
             .distinguished_name
             .push(rcgen::DnType::CommonName, "Proxide Test CA");
-        let cert = rcgen::Certificate::from_params(params).unwrap();
+        let key = rcgen::KeyPair::generate().unwrap();
+        let cert = params.self_signed(&key).unwrap();
 
         let mut roots = rustls::RootCertStore::empty();
-        roots
-            .add(&rustls::Certificate(cert.serialize_der().unwrap()))
-            .unwrap();
+        roots.add(cert.der().clone()).unwrap();
         let ca = CADetails {
-            certificate: cert.serialize_pem().unwrap(),
-            key: cert.serialize_private_key_pem(),
+            certificate: cert.pem(),
+            key: key.serialize_pem(),
         };
         (ca, roots)
     }
 
-    fn verify(host: &str) -> std::result::Result<ServerCertVerified, rustls::Error>
+    fn verify(host: &'static str) -> std::result::Result<ServerCertVerified, rustls::Error>
     {
         let (ca, roots) = test_ca();
         let (chain, _) = get_certificate(host, &ca);
-        WebPkiVerifier::new(roots, None).verify_server_cert(
-            &chain[0],
-            &[],
-            &ServerName::try_from(host).unwrap(),
-            &mut std::iter::empty(),
-            &[],
-            SystemTime::now(),
-        )
+        WebPkiServerVerifier::builder_with_provider(Arc::new(roots), crypto_provider())
+            .build()
+            .unwrap()
+            .verify_server_cert(
+                &chain[0],
+                &[],
+                &ServerName::try_from(host).unwrap(),
+                &[],
+                UnixTime::now(),
+            )
     }
 
     #[test]
@@ -344,5 +372,123 @@ mod test
     {
         verify("localhost").expect("certificate should be valid for 'localhost'");
         verify("example.com").expect("certificate should be valid for 'example.com'");
+    }
+
+    #[test]
+    fn certificate_is_not_valid_for_other_names()
+    {
+        let (ca, roots) = test_ca();
+        let (chain, _) = get_certificate("example.com", &ca);
+        let result =
+            WebPkiServerVerifier::builder_with_provider(Arc::new(roots), crypto_provider())
+                .build()
+                .unwrap()
+                .verify_server_cert(
+                    &chain[0],
+                    &[],
+                    &ServerName::try_from("other.example.com").unwrap(),
+                    &[],
+                    UnixTime::now(),
+                );
+        assert!(result.is_err());
+    }
+
+    /// Run a full TLS handshake through `handle` against a real TLS server, and check that the
+    /// client sees a certificate signed by the proxide CA and the server's ALPN choice.
+    #[tokio::test]
+    async fn intercepts_tls_connection()
+    {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let (ca, roots) = test_ca();
+        let roots = Arc::new(roots);
+
+        // The "real" server, with its own certificate that nobody trusts.
+        let server_key = rcgen::KeyPair::generate().unwrap();
+        let server_cert = rcgen::CertificateParams::new(vec!["upstream.test".to_string()])
+            .unwrap()
+            .self_signed(&server_key)
+            .unwrap();
+        let mut server_config = ServerConfig::builder_with_provider(crypto_provider())
+            .with_safe_default_protocol_versions()
+            .unwrap()
+            .with_no_client_auth()
+            .with_single_cert(
+                vec![server_cert.der().clone()],
+                PrivatePkcs8KeyDer::from(server_key.serialize_der()).into(),
+            )
+            .unwrap();
+        server_config.alpn_protocols = vec![b"h2".to_vec()];
+
+        let (client_side, proxy_client_side) = tokio::io::duplex(64 * 1024);
+        let (proxy_server_side, server_side) = tokio::io::duplex(64 * 1024);
+
+        let upstream_task = tokio::spawn(async move {
+            let mut stream = tokio_rustls::TlsAcceptor::from(Arc::new(server_config))
+                .accept(server_side)
+                .await
+                .unwrap();
+            let mut buf = [0u8; 4];
+            stream.read_exact(&mut buf).await.unwrap();
+            stream.write_all(b"pong").await.unwrap();
+            stream.flush().await.unwrap();
+            buf
+        });
+
+        let client_task = tokio::spawn(async move {
+            let mut config = ClientConfig::builder_with_provider(crypto_provider())
+                .with_safe_default_protocol_versions()
+                .unwrap()
+                .with_root_certificates(roots)
+                .with_no_client_auth();
+            config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+            let mut stream = tokio_rustls::TlsConnector::from(Arc::new(config))
+                .connect(ServerName::try_from("upstream.test").unwrap(), client_side)
+                .await
+                .expect("client should trust the proxide certificate");
+            assert_eq!(stream.get_ref().1.alpn_protocol(), Some(&b"h2"[..]));
+            stream.write_all(b"ping").await.unwrap();
+            stream.flush().await.unwrap();
+            let mut buf = [0u8; 4];
+            stream.read_exact(&mut buf).await.unwrap();
+            buf
+        });
+
+        let mut details = ConnectionDetails {
+            uuid: uuid::Uuid::new_v4(),
+            protocol_stack: vec![],
+            opaque_redirect: None,
+        };
+        let options = Arc::new(ConnectionOptions {
+            allow_remote: false,
+            listen_port: "0".to_string(),
+            target_server: None,
+            proxy: None,
+            ca: Some(ca),
+        });
+        let Streams {
+            mut client,
+            mut server,
+        } = handle(
+            &mut details,
+            Streams::new(proxy_client_side, proxy_server_side),
+            options,
+            "upstream.test".to_string(),
+        )
+        .await
+        .unwrap();
+
+        // Relay one message each way.
+        let mut buf = [0u8; 4];
+        client.read_exact(&mut buf).await.unwrap();
+        server.write_all(&buf).await.unwrap();
+        server.flush().await.unwrap();
+        server.read_exact(&mut buf).await.unwrap();
+        client.write_all(&buf).await.unwrap();
+        client.flush().await.unwrap();
+
+        assert_eq!(&upstream_task.await.unwrap(), b"ping");
+        assert_eq!(&client_task.await.unwrap(), b"pong");
+        assert!(matches!(details.protocol_stack[..], [Protocol::Tls]));
     }
 }
