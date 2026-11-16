@@ -634,7 +634,37 @@ mod test
     {
         let capture = read_file(&data_path(LEGACY_CAPTURE)).unwrap();
         let session = read_file(&data_path(LEGACY_SESSION)).unwrap();
-        assert_eq!(to_json(&capture), to_json(&session));
+
+        // Capture files store event times as `SystemTime`, which has a 100 ns resolution on
+        // Windows, while the session file keeps the nanoseconds recorded on Linux.
+        let mut capture = to_json(&capture);
+        let mut session = to_json(&session);
+        truncate_timestamps_to_100ns(&mut capture);
+        truncate_timestamps_to_100ns(&mut session);
+        assert_eq!(capture, session);
+    }
+
+    fn truncate_timestamps_to_100ns(value: &mut serde_json::Value)
+    {
+        use chrono::{DateTime, SecondsFormat, Timelike};
+        match value {
+            serde_json::Value::String(s) => {
+                if let Ok(ts) = DateTime::parse_from_rfc3339(s) {
+                    let nanos = ts.nanosecond() / 100 * 100;
+                    *s = ts
+                        .with_nanosecond(nanos)
+                        .unwrap()
+                        .to_rfc3339_opts(SecondsFormat::Nanos, true);
+                }
+            }
+            serde_json::Value::Array(items) => {
+                items.iter_mut().for_each(truncate_timestamps_to_100ns)
+            }
+            serde_json::Value::Object(map) => {
+                map.values_mut().for_each(truncate_timestamps_to_100ns)
+            }
+            _ => {}
+        }
     }
 
     #[test]
