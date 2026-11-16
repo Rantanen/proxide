@@ -87,6 +87,31 @@ view`.
 > proxide view capture.bin
 > ```
 
+#### File format compatibility
+
+Proxide 0.4.0 changed the binary format of capture and session files. Newer
+versions can open files from older versions, but older versions can't open
+files written by newer versions.
+
+| File written by  | Header               | Opens in 0.3.0 and earlier | Opens in 0.4.0 and later |
+|------------------|----------------------|----------------------------|--------------------------|
+| 0.3.0 or earlier | `PROXIDE-CAPTUREv02` | Yes                        | Yes                      |
+| 0.3.0 or earlier | `PROXIDE-SESSIONv01` | Yes                        | Yes                      |
+| 0.4.0 or later   | `PROXIDE-CAPTUREv03` | No: "Unsupported session file version 'v03'"\* | Yes |
+| 0.4.0 or later   | `PROXIDE-SESSIONv02` | No: "Unsupported session file version 'v02'" | Yes |
+
+\* 0.3.0 and earlier call every unsupported file a "session file", even
+captures. Later versions name the file type correctly.
+
+There is no way to convert new files back to the old format, so share
+captures only with people on 0.4.0 or later. `--json` output is not affected
+by this change.
+
+The change comes from upgrading the MessagePack library (`rmp-serde` 0.14 to
+1.x), which encodes some values differently, for example request IDs and
+enums. The file header version was bumped so that older releases report an
+unsupported version instead of a confusing decoding error.
+
 ### Decoding gRPC
 
 When Proxide is used to analyze gRPC traffic, it helps to be able to decode the
