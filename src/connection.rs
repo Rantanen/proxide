@@ -14,7 +14,7 @@ mod connect;
 mod demux;
 mod http2;
 mod stream;
-mod tls;
+pub mod tls;
 
 #[derive(Debug, Snafu)]
 #[snafu(visibility(pub(crate)))]

@@ -6,6 +6,8 @@ use std::io::Read;
 use std::rc::Rc;
 use tui::text::{Span, Spans, Text};
 
+pub mod reflection;
+
 use super::{ConfigurationError, ConfigurationValueError, Decoder, DecoderFactory, Result};
 use crate::session::{MessageData, RequestData, RequestPart};
 
@@ -26,15 +28,60 @@ pub fn setup_args(app: Command) -> Command
             .action(ArgAction::Append)
             .help("Specify .proto file for decoding Protobuf messages"),
     )
+    .arg(
+        Arg::new("grpc-reflection")
+            .long("grpc-reflection")
+            .value_name("SERVER")
+            .help("Load Protobuf definitions from a server with gRPC server reflection")
+            .long_help(
+                "\
+Load the Protobuf definitions for decoding gRPC messages from SERVER with gRPC server reflection.
+The server must have the reflection service enabled.
+
+SERVER is host:port, http://host[:port] or https://host[:port]. Without a scheme, Proxide tries
+an unencrypted connection first and then TLS. The server certificate is not validated.
+
+The definitions are loaded once at startup. Files given with --grpc are added to them, and are used
+instead of the server's definitions when both define the same type.",
+            ),
+    )
 }
 
 pub fn initialize(matches: &ArgMatches) -> Result<Option<Box<dyn DecoderFactory>>>
 {
+    let globs: Vec<&String> = matches
+        .get_many::<String>("grpc")
+        .map(|g| g.collect())
+        .unwrap_or_default();
+    let reflection_server = matches.get_one::<String>("grpc-reflection");
+
     // Avoid initialization if the grpc arguments arent given on the command line.
-    let globs = match matches.get_many::<String>("grpc") {
-        Some(globs) => globs,
-        None => return Ok(None),
-    };
+    if globs.is_empty() && reflection_server.is_none() {
+        return Ok(None);
+    }
+
+    let mut reflected = Vec::new();
+    if let Some(server) = reflection_server {
+        let target = reflection::Target::parse(server)
+            .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send>)
+            .context(ConfigurationError {
+                option: "grpc-reflection",
+            })?;
+        let sources = reflection::fetch_proto_sources(&target)
+            .map_err(|e| {
+                Box::new(reflection::ReflectionError(format!(
+                    "Failed to load definitions from '{}': {}",
+                    server, e
+                ))) as Box<dyn std::error::Error + Send>
+            })
+            .context(ConfigurationError {
+                option: "grpc-reflection",
+            })?;
+        for file in &sources {
+            log::debug!("gRPC reflection definitions:\n{}", file.source);
+        }
+        reflected = sources;
+    }
 
     // Read all proto files.
     let mut content = Vec::new();
@@ -65,15 +112,53 @@ pub fn initialize(matches: &ArgMatches) -> Result<Option<Box<dyn DecoderFactory>
         }
     }
 
-    let content_ref: Vec<_> = content.iter().map(|s| s.as_str()).collect();
-
-    let context = Context::parse(content_ref)
+    let option = match matches.get_many::<String>("grpc") {
+        Some(_) => "grpc",
+        None => "grpc-reflection",
+    };
+    let context = parse_definitions(&content, reflected)
         .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send>)
-        .context(ConfigurationError { option: "grpc" })?;
+        .context(ConfigurationError { option })?;
 
     Ok(Some(Box::new(GrpcDecoderFactory {
         ctx: Rc::new(context),
     })))
+}
+
+/// Parses the `--grpc` files together with the files loaded with reflection.
+///
+/// If both define the same type, the `--grpc` file wins and the reflected file is left out. This
+/// allows overriding definitions the server provides, and passing the same files both ways.
+fn parse_definitions(
+    files: &[String],
+    mut reflected: Vec<reflection::ReflectedFile>,
+) -> std::result::Result<Context, protofish::context::ParseError>
+{
+    loop {
+        let sources: Vec<&str> = files
+            .iter()
+            .map(String::as_str)
+            .chain(reflected.iter().map(|f| f.source.as_str()))
+            .collect();
+
+        let duplicate = match Context::parse(sources) {
+            Err(protofish::context::ParseError::DuplicateType { name }) => name,
+            result => return result,
+        };
+
+        // Only leave out reflected files. A duplicate within the --grpc files is an error.
+        match reflected.iter().position(|f| f.types.contains(&duplicate)) {
+            Some(idx) => {
+                let file = reflected.remove(idx);
+                log::warn!(
+                    "gRPC reflection: {} is also defined in --grpc files, leaving out {} from reflection",
+                    duplicate,
+                    file.name
+                );
+            }
+            None => return Err(protofish::context::ParseError::DuplicateType { name: duplicate }),
+        }
+    }
 }
 
 impl DecoderFactory for GrpcDecoderFactory
@@ -390,7 +475,7 @@ impl ToText for protofish::decode::PackedArray
 }
 
 #[cfg(test)]
-mod test
+pub(super) mod test
 {
     use super::*;
     use crate::session::{RequestPart, Status};
@@ -422,7 +507,7 @@ mod test
         }
     "#;
 
-    fn factory_from_files(protos: &[&str]) -> Result<Option<Box<dyn DecoderFactory>>>
+    pub(super) fn factory_from_files(protos: &[&str]) -> Result<Option<Box<dyn DecoderFactory>>>
     {
         let dir = std::env::temp_dir().join(format!("proxide-test-{}", Uuid::new_v4()));
         std::fs::create_dir(&dir).unwrap();
@@ -445,7 +530,7 @@ mod test
     }
 
     /// Wraps a protobuf payload into an uncompressed gRPC frame.
-    fn grpc_frame(payload: &[u8]) -> Vec<u8>
+    pub(super) fn grpc_frame(payload: &[u8]) -> Vec<u8>
     {
         let mut frame = vec![0];
         frame.extend_from_slice(&(payload.len() as u32).to_be_bytes());
@@ -453,7 +538,7 @@ mod test
         frame
     }
 
-    fn request(path: &str) -> RequestData
+    pub(super) fn request(path: &str) -> RequestData
     {
         RequestData {
             uuid: Uuid::new_v4(),
@@ -466,7 +551,7 @@ mod test
         }
     }
 
-    fn message(part: RequestPart, content: &[u8]) -> MessageData
+    pub(super) fn message(part: RequestPart, content: &[u8]) -> MessageData
     {
         let mut headers = HeaderMap::new();
         headers.insert("content-type", HeaderValue::from_static("application/grpc"));
@@ -475,7 +560,7 @@ mod test
         msg
     }
 
-    fn text_to_string(text: &Text) -> String
+    pub(super) fn text_to_string(text: &Text) -> String
     {
         text.lines
             .iter()
@@ -610,6 +695,63 @@ mod test
                 );
             }
         }
+    }
+
+    fn reflected(name: &str, source: &str, types: &[&str]) -> reflection::ReflectedFile
+    {
+        reflection::ReflectedFile {
+            name: name.to_string(),
+            source: source.to_string(),
+            types: types.iter().map(|t| t.to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn grpc_files_override_reflected_definitions()
+    {
+        let user = r#"syntax = "proto3"; package test;
+            message Person { string name = 1; string email = 9; }"#;
+        let server = r#"syntax = "proto3"; package test;
+            message Person { string name = 1; }
+            message Group { repeated Person members = 1; }"#;
+        let other = r#"syntax = "proto3"; package other;
+            message Thing { test.Group group = 1; }"#;
+
+        let ctx = parse_definitions(
+            &[user.to_string()],
+            vec![
+                reflected("test.proto", server, &["test.Person", "test.Group"]),
+                reflected("other.proto", other, &["other.Thing"]),
+            ],
+        );
+
+        // The whole reflected test.proto is replaced by the --grpc file, so test.Group is gone
+        // and other.Thing can't resolve it.
+        let err = ctx.expect_err("should fail").to_string();
+        assert!(err.contains("test.Group"), "{}", err);
+
+        // Without the dependency, the --grpc version of test.Person is used.
+        let ctx = parse_definitions(
+            &[user.to_string()],
+            vec![reflected(
+                "test.proto",
+                server,
+                &["test.Person", "test.Group"],
+            )],
+        )
+        .unwrap();
+        let person = ctx.get_message("test.Person").unwrap();
+        assert!(person.get_field_by_name("email").is_some());
+        assert!(ctx.get_message("test.Group").is_none());
+    }
+
+    #[test]
+    fn duplicate_grpc_files_are_an_error()
+    {
+        let user = r#"syntax = "proto3"; package test; message Person { string name = 1; }"#;
+        let err = parse_definitions(&[user.to_string(), user.to_string()], vec![])
+            .expect_err("should fail");
+        assert_eq!(err.to_string(), "Duplicate type: test.Person");
     }
 
     #[test]

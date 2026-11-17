@@ -500,6 +500,53 @@ mod test
     }
 
     #[test]
+    fn grpc_reflection_takes_one_server()
+    {
+        for cmd in ["view", "monitor"] {
+            let args: &[&str] = match cmd {
+                "view" => &[
+                    "view",
+                    "--grpc-reflection",
+                    "localhost:1",
+                    "f.bin",
+                    "--grpc",
+                    "a.proto",
+                ],
+                _ => &[
+                    "monitor",
+                    "-l",
+                    "1",
+                    "--no-ca",
+                    "--grpc-reflection",
+                    "https://h",
+                    "--grpc",
+                    "a.proto",
+                ],
+            };
+            let m = parse(args).unwrap();
+            let m = sub(&m, cmd);
+            assert!(string(m, "grpc-reflection").is_some(), "{}", cmd);
+            assert_eq!(m.get_many::<String>("grpc").unwrap().count(), 1, "{}", cmd);
+        }
+
+        assert_eq!(
+            error_kind(&["view", "f.bin", "--grpc-reflection"]),
+            ErrorKind::InvalidValue
+        );
+        assert_eq!(
+            error_kind(&[
+                "capture",
+                "-l",
+                "1",
+                "--no-ca",
+                "--grpc-reflection",
+                "localhost:1"
+            ]),
+            ErrorKind::UnknownArgument
+        );
+    }
+
+    #[test]
     fn view_requires_file()
     {
         assert_eq!(error_kind(&["view"]), ErrorKind::MissingRequiredArgument);
