@@ -113,7 +113,7 @@ fn proxide_main() -> Result<(), Error>
     init_log(&matches)?;
     match matches.subcommand() {
         Some(("config", matches)) => return config::run(matches),
-        Some(("view", matches)) if matches.is_present("json") => return json::view(matches),
+        Some(("view", matches)) if matches.get_flag("json") => return json::view(matches),
         _ => (), // Ignore other subcommands for now.
     }
 
@@ -140,13 +140,17 @@ fn proxide_main() -> Result<(), Error>
             (Session::default(), sub_m)
         }
         Some(("capture", sub_m)) => {
-            let filename = sub_m.value_of("file").map(String::from).unwrap_or_else(|| {
-                format!(
-                    "capture-{}.bin",
-                    chrono::Local::now().format("%Y-%m-%d_%H%M%S")
-                )
-            });
-            let format = match sub_m.is_present("json") {
+            let filename = sub_m
+                .get_one::<String>("file")
+                .map(String::as_str)
+                .map(String::from)
+                .unwrap_or_else(|| {
+                    format!(
+                        "capture-{}.bin",
+                        chrono::Local::now().format("%Y-%m-%d_%H%M%S")
+                    )
+                });
+            let format = match sub_m.get_flag("json") {
                 true => session::serialization::OutputFormat::Json,
                 false => session::serialization::OutputFormat::MessagePack,
             };
@@ -195,7 +199,7 @@ fn proxide_main() -> Result<(), Error>
             .context(SerializationError {});
         }
         Some(("view", sub_m)) => {
-            let filename = sub_m.value_of("file").unwrap();
+            let filename = sub_m.get_one::<String>("file").map(String::as_str).unwrap();
             let session =
                 session::serialization::read_file(&filename).context(SerializationError {})?;
             (session, sub_m)
@@ -222,10 +226,10 @@ fn proxide_main() -> Result<(), Error>
 fn init_log(matches: &ArgMatches) -> Result<(), Error>
 {
     // Debug builds always log everything into 'trace.log' unless the user asked for another file.
-    let (path, level) = match matches.value_of("log") {
+    let (path, level) = match matches.get_one::<String>("log").map(String::as_str) {
         Some(path) => {
             let level = matches
-                .value_of("log-level")
+                .get_one::<String>("log-level")
                 .unwrap()
                 .parse()
                 .expect("clap validates the log level");
@@ -255,8 +259,11 @@ impl ConnectionOptions
     {
         let ca_details = Self::read_cert(args)?;
 
-        let target_server = args.value_of("target").map(ToString::to_string);
-        let mut proxy = match args.value_of("proxy") {
+        let target_server = args
+            .get_one::<String>("target")
+            .map(String::as_str)
+            .map(ToString::to_string);
+        let mut proxy = match args.get_one::<String>("proxy").map(String::as_str) {
             Some(p) => Some(ProxyFilter::parse(p)?),
             None => None,
         };
@@ -266,8 +273,8 @@ impl ConnectionOptions
         }
 
         Ok(Arc::new(Self {
-            allow_remote: args.is_present("allow-remote"),
-            listen_port: args.value_of("listen").unwrap().to_string(),
+            allow_remote: args.get_flag("allow-remote"),
+            listen_port: args.get_one::<String>("listen").unwrap().to_string(),
             ca: ca_details,
             target_server,
             proxy,
@@ -276,12 +283,18 @@ impl ConnectionOptions
 
     fn read_cert(args: &ArgMatches) -> Result<Option<CADetails>, Error>
     {
-        if args.is_present("no-ca") {
+        if args.get_flag("no-ca") {
             return Ok(None);
         }
 
-        let cert = args.value_of("ca-certificate").unwrap_or("proxide_ca.crt");
-        let key = args.value_of("ca-key").unwrap_or("proxide_ca.key");
+        let cert = args
+            .get_one::<String>("ca-certificate")
+            .map(String::as_str)
+            .unwrap_or("proxide_ca.crt");
+        let key = args
+            .get_one::<String>("ca-key")
+            .map(String::as_str)
+            .unwrap_or("proxide_ca.key");
 
         // Running without the CA is almost never what the user wants, as TLS connections would
         // fail with nothing on screen, so require the user to opt out of it explicitly.
@@ -292,10 +305,10 @@ impl ConnectionOptions
             .collect();
         if !missing.is_empty() {
             let mut create = String::from("proxide config ca --create");
-            if let Some(cert) = args.value_of("ca-certificate") {
+            if let Some(cert) = args.get_one::<String>("ca-certificate").map(String::as_str) {
                 create += &format!(" --ca-cert {}", cert);
             }
-            if let Some(key) = args.value_of("ca-key") {
+            if let Some(key) = args.get_one::<String>("ca-key").map(String::as_str) {
                 create += &format!(" --ca-key {}", key);
             }
             return Err(Error::ArgumentError {

@@ -1,4 +1,4 @@
-use clap::{App, Arg, ArgMatches};
+use clap::{Arg, ArgAction, ArgMatches, Command};
 use protofish::{context::MessageRef, Context, MessageValue};
 use snafu::ResultExt;
 use std::io::Read;
@@ -13,22 +13,24 @@ pub struct GrpcDecoderFactory
     ctx: Rc<protofish::Context>,
 }
 
-pub fn setup_args(app: App) -> App
+pub fn setup_args(app: Command) -> Command
 {
     app.arg(
-        Arg::with_name("grpc")
+        Arg::new("grpc")
             .long("grpc")
             .value_name("PROTO_FILE")
-            .multiple(true)
-            .help("Specify .proto file for decoding Protobuf messages")
-            .takes_value(true),
+            // Several values per occurrence, so an unquoted `--grpc src/*.proto` expanded by the
+            // shell works, and the option can be repeated.
+            .num_args(1..)
+            .action(ArgAction::Append)
+            .help("Specify .proto file for decoding Protobuf messages"),
     )
 }
 
 pub fn initialize(matches: &ArgMatches) -> Result<Option<Box<dyn DecoderFactory>>>
 {
     // Avoid initialization if the grpc arguments arent given on the command line.
-    let globs = match matches.values_of("grpc") {
+    let globs = match matches.get_many::<String>("grpc") {
         Some(globs) => globs,
         None => return Ok(None),
     };

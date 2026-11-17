@@ -24,7 +24,7 @@ tui = { version = "0.19", default-features = false, features = [ "crossterm" ] }
 crossterm = "0.25"
 uuid = { version = "0.8", features = [ "v4", "serde" ] }
 chrono = { version = "0.4", features = ["serde"] }
-clap = "3"
+clap = { version = "4", features = [ "string" ] }
 protofish = { version = "0.2" }
 serde = { version = "1", features = ["derive"] }
 http-serde = "1"
