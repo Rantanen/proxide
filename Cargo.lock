@@ -1318,7 +1318,7 @@ dependencies = [
 
 [[package]]
 name = "proxide"
-version = "0.4.3"
+version = "0.5.0"
 dependencies = [
  "base64 0.11.0",
  "bytes",
