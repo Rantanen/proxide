@@ -89,7 +89,8 @@ fn create_ca(matches: &ArgMatches, cert_file: &str, key_file: &str) -> Result<()
     // the certificate so it shouldn't be changed without a good reason. If it's
     // changed here, it would be best if new versions of Proxide still supported the
     // old names in the 'revoke' command.
-    let mut ca_params = rcgen::CertificateParams::new(vec![]);
+    let mut ca_params = rcgen::CertificateParams::new(vec![])
+        .map_err(|e| Error::RuntimeError { msg: e.to_string() })?;
     ca_params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
     let mut key_usage = rcgen::CustomExtension::from_oid_content(
         &[2, 5, 29, 15],
@@ -123,7 +124,11 @@ fn create_ca(matches: &ArgMatches, cert_file: &str, key_file: &str) -> Result<()
     ca_params
         .distinguished_name
         .push(rcgen::DnType::CommonName, CERT_COMMON_NAME); // See the comment above.
-    let ca_cert = rcgen::Certificate::from_params(ca_params).unwrap();
+    let ca_key =
+        rcgen::KeyPair::generate().map_err(|e| Error::RuntimeError { msg: e.to_string() })?;
+    let ca_cert = ca_params
+        .self_signed(&ca_key)
+        .map_err(|e| Error::RuntimeError { msg: e.to_string() })?;
 
     File::create(cert_file)
         .map_err(|_| Error::ArgumentError {
@@ -132,12 +137,7 @@ fn create_ca(matches: &ArgMatches, cert_file: &str, key_file: &str) -> Result<()
                 cert_file
             ),
         })?
-        .write_all(
-            ca_cert
-                .serialize_pem()
-                .map_err(|e| Error::RuntimeError { msg: e.to_string() })?
-                .as_bytes(),
-        )
+        .write_all(ca_cert.pem().as_bytes())
         .map_err(|_| Error::ArgumentError {
             msg: format!("Could not write certificate to '{}'", cert_file),
         })?;
@@ -148,7 +148,7 @@ fn create_ca(matches: &ArgMatches, cert_file: &str, key_file: &str) -> Result<()
                 key_file
             ),
         })?
-        .write_all(ca_cert.serialize_private_key_pem().as_bytes())
+        .write_all(ca_key.serialize_pem().as_bytes())
         .map_err(|_| Error::ArgumentError {
             msg: format!("Could not write private key to '{}'", key_file),
         })?;

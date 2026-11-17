@@ -23,7 +23,7 @@ pub enum ConfigurationErrorKind
 {
     DNSError
     {
-        source: rustls::client::InvalidDnsNameError,
+        source: rustls::pki_types::InvalidDnsNameError,
     },
     UriError
     {
