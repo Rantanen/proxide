@@ -19,26 +19,30 @@ pub fn run(matches: &ArgMatches) -> Result<(), Error>
 pub fn run_ca(matches: &ArgMatches) -> Result<(), Error>
 {
     // Handle revoke first.
-    if matches.is_present("revoke") || matches.is_present("trust") {
+    if matches.contains_id("revoke") || matches.contains_id("trust") {
         os::revoke_ca(matches)?;
     }
 
     // If 'revoke' was the only command, we'll interrupt here.
-    if !(matches.is_present("create") || matches.is_present("trust")) {
+    if !(matches.get_flag("create") || matches.contains_id("trust")) {
         return Ok(());
     }
 
     let cert_file = matches
-        .value_of("ca-certificate")
+        .get_one::<String>("ca-certificate")
+        .map(String::as_str)
         .unwrap_or("proxide_ca.crt");
-    let key_file = matches.value_of("ca-key").unwrap_or("proxide_ca.key");
+    let key_file = matches
+        .get_one::<String>("ca-key")
+        .map(String::as_str)
+        .unwrap_or("proxide_ca.key");
 
-    if matches.is_present("create") {
+    if matches.get_flag("create") {
         create_ca(matches, cert_file, key_file)?;
     }
 
     // Trust the certificate if the user asked for that.
-    if matches.is_present("trust") {
+    if matches.contains_id("trust") {
         trust_ca(matches, cert_file, key_file)?;
     }
 
@@ -70,7 +74,7 @@ fn create_ca(matches: &ArgMatches, cert_file: &str, key_file: &str) -> Result<()
 {
     // If the user didn't specify --force we'll need to ensure we are not overwriting
     // any existing files during create.
-    if !matches.is_present("force") {
+    if !matches.get_flag("force") {
         for file in &[cert_file, key_file] {
             if Path::new(file).is_file() {
                 return Err(Error::ArgumentError {
@@ -185,8 +189,9 @@ mod os
         // Since the use of these two options conflict with each other, we need to only care about
         // one of them here.
         let store = matches
-            .value_of("revoke")
-            .or_else(|| matches.value_of("trust"))
+            .get_one::<String>("revoke")
+            .or_else(|| matches.get_one::<String>("trust"))
+            .map(String::as_str)
             .unwrap_or("user");
         match store {
             "user" | "system" | "all" => (),
@@ -231,7 +236,10 @@ mod os
 
     pub fn trust_ca(cert_file: &str, matches: &ArgMatches) -> Result<(), Error>
     {
-        let trust = matches.value_of("trust").unwrap_or("user");
+        let trust = matches
+            .get_one::<String>("trust")
+            .map(String::as_str)
+            .unwrap_or("user");
         match trust {
             "user" | "system" | "all" => (),
             v => {

@@ -29,7 +29,7 @@ pub struct JsonMessageData
 
 pub fn view(matches: &ArgMatches) -> Result<(), Error>
 {
-    let filename = matches.value_of("file").unwrap();
+    let filename = matches.get_one::<String>("file").unwrap();
     let session = session::serialization::read_file(&filename).context(SerializationError {})?;
 
     let decoders = crate::decoders::get_decoders(matches).context(DecoderError {})?;
