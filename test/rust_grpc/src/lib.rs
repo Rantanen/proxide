@@ -4,6 +4,7 @@
 )]
 
 use crate::server::GrpcServer;
+pub use crate::server::FILE_DESCRIPTOR_SET;
 pub use rust_grpc::{
     ClientProcess, DiagnosticsRequest, DiagnosticsResponse, SendMessageRequest, SendMessageResponse,
 };

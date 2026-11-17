@@ -27,6 +27,9 @@ mod rust_grpc_private
     tonic::include_proto!("rust_grpc");
 }
 
+/// Encoded `FileDescriptorSet` of the test protos and their imports, served with gRPC reflection.
+pub const FILE_DESCRIPTOR_SET: &[u8] = tonic::include_file_descriptor_set!("rust_grpc_descriptor");
+
 /// A simple gRPC Server for receiving messages
 #[derive(Parser, Debug)]
 #[command(author, version)]
@@ -207,9 +210,13 @@ impl LocalTestService
         };
         #[cfg(not(test))]
         println!("Test server listening on {}", address);
+        let reflection = tonic_reflection::server::Builder::configure()
+            .register_encoded_file_descriptor_set(FILE_DESCRIPTOR_SET)
+            .build()?;
         Server::builder()
             .concurrency_limit_per_connection(128)
             .add_service(TestServiceServer::new(service))
+            .add_service(reflection)
             .serve_with_shutdown(address, async {
                 tokio::signal::ctrl_c()
                     .await

@@ -68,21 +68,12 @@ where
         sni.clone()
     };
 
-    // We'll avoid validating the server certificates, since we don't really know what certs the
-    // client trusts.
-    let provider = crypto_provider();
-    let mut server_stream_config = ClientConfig::builder_with_provider(provider.clone())
-        .with_safe_default_protocol_versions()
-        .context(TlsError {})
-        .context(ServerError {
-            scenario: "configuring TLS",
-        })?
-        .dangerous()
-        .with_custom_certificate_verifier(Arc::new(NoVerify {
-            algorithms: provider.signature_verification_algorithms,
-        }))
-        .with_no_client_auth();
-    server_stream_config.alpn_protocols = alpn;
+    let server_stream_config =
+        upstream_client_config(alpn)
+            .context(TlsError {})
+            .context(ServerError {
+                scenario: "configuring TLS",
+            })?;
     let server_stream_config = TlsConnector::from(Arc::new(server_stream_config));
 
     log::debug!(
@@ -117,7 +108,7 @@ where
     log::debug!("{} - Creating certificate for '{}'", details.uuid, &sni);
     let (cert_chain, private_key) = get_certificate(&sni, ca);
 
-    let mut client_stream_config = ServerConfig::builder_with_provider(provider)
+    let mut client_stream_config = ServerConfig::builder_with_provider(crypto_provider())
         .with_safe_default_protocol_versions()
         .context(TlsError {})
         .context(ClientError {
@@ -158,6 +149,26 @@ where
 fn crypto_provider() -> Arc<CryptoProvider>
 {
     Arc::new(ring::default_provider())
+}
+
+/// TLS client configuration for connections from Proxide to servers.
+///
+/// We'll avoid validating the server certificates, since we don't really know what certs the
+/// client trusts.
+pub fn upstream_client_config(
+    alpn: Vec<Vec<u8>>,
+) -> std::result::Result<ClientConfig, rustls::Error>
+{
+    let provider = crypto_provider();
+    let mut config = ClientConfig::builder_with_provider(provider.clone())
+        .with_safe_default_protocol_versions()?
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::new(NoVerify {
+            algorithms: provider.signature_verification_algorithms,
+        }))
+        .with_no_client_auth();
+    config.alpn_protocols = alpn;
+    Ok(config)
 }
 
 /// Server certificate verifier that accepts any certificate.

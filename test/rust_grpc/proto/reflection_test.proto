@@ -1,0 +1,56 @@
+// Definitions for testing Protobuf decoding with gRPC server reflection.
+//
+// Covers the constructs the reflection descriptors are rendered from: optional fields, oneofs,
+// maps, nested types, enums, imports and streaming methods.
+syntax = "proto3";
+
+package reflection_test;
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/wrappers.proto";
+
+enum Color {
+  COLOR_UNSPECIFIED = 0;
+  COLOR_RED = 1;
+  COLOR_BLUE = 2;
+}
+
+message Item {
+  enum Kind {
+    KIND_UNKNOWN = 0;
+    KIND_TOOL = 1;
+  }
+
+  message Tag {
+    string key = 1;
+    sint32 weight = 2;
+  }
+
+  string name = 1;
+  optional string nickname = 2;
+  optional int32 count = 3;
+  Kind kind = 4;
+  repeated Tag tags = 5;
+  map<string, int64> attributes = 6;
+  map<int32, Tag> tags_by_id = 7;
+
+  oneof source {
+    string url = 8;
+    bytes blob = 9;
+  }
+
+  Color color = 10;
+  google.protobuf.Timestamp created = 11;
+  google.protobuf.StringValue note = 12;
+  repeated double scores = 13;
+  fixed64 checksum = 14;
+}
+
+message ItemRequest {
+  string name = 1;
+}
+
+service ItemService {
+  rpc GetItem (ItemRequest) returns (Item);
+  rpc WatchItems (stream ItemRequest) returns (stream Item);
+}

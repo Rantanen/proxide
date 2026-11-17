@@ -129,6 +129,34 @@ given with `--grpc`. This includes well-known types such as
 `google/protobuf/duration.proto`, which ship with `protoc` in its `include`
 directory.
 
+#### Loading definitions from the server
+
+If the server has
+[gRPC server reflection](https://github.com/grpc/grpc/blob/master/doc/server-reflection.md)
+enabled, Proxide can load the definitions from it with `--grpc-reflection`
+instead of reading `.proto` files:
+
+> ```
+> proxide monitor -l 5555 -t localhost:50051 --grpc-reflection localhost:50051
+> proxide view capture.bin --grpc-reflection https://api.example.com
+> ```
+
+- The server is given as `host:port`, `http://host[:port]` or
+  `https://host[:port]`. Without a scheme, Proxide tries an unencrypted
+  connection first and then TLS. The server certificate is not validated.
+- Definitions are loaded once, when Proxide starts. Restart Proxide to pick up
+  changes on the server.
+- Proxide sends a few reflection requests to the server, which the server can
+  see in its logs. Nothing is sent unless `--grpc-reflection` is given.
+- Imported files are loaded too. If the server doesn't provide common
+  well-known types such as `google/protobuf/timestamp.proto`, Proxide uses
+  built-in copies.
+- Unlike `--grpc`, reflection also works for proto2 services (except for
+  groups) and for `map` fields.
+- `--grpc` files can be given together with `--grpc-reflection`. If both define
+  the same type, the `--grpc` file is used and the server's file that contains
+  that type is left out.
+
 ### Decoding TLS
 
 *Note that trusting CA certificates may compromise the system security. Please
