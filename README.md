@@ -123,6 +123,12 @@ option works with both the `monitor` and `view` commands.
 > proxide view capture.bin --grpc /project/src/*.proto
 > ```
 
+Only proto3 files (`syntax = "proto3";`) are supported, including `optional`
+fields. `import` statements are not followed, so imported files must also be
+given with `--grpc`. This includes well-known types such as
+`google/protobuf/duration.proto`, which ship with `protoc` in its `include`
+directory.
+
 ### Decoding TLS
 
 *Note that trusting CA certificates may compromise the system security. Please

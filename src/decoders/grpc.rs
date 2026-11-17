@@ -1,5 +1,6 @@
 use clap::{Arg, ArgAction, ArgMatches, Command};
-use protofish::{context::MessageRef, Context, MessageValue};
+use protofish::context::{Context, MessageRef};
+use protofish::decode::MessageValue;
 use snafu::ResultExt;
 use std::io::Read;
 use std::rc::Rc;
@@ -10,7 +11,7 @@ use crate::session::{MessageData, RequestData, RequestPart};
 
 pub struct GrpcDecoderFactory
 {
-    ctx: Rc<protofish::Context>,
+    ctx: Rc<Context>,
 }
 
 pub fn setup_args(app: Command) -> Command
@@ -89,7 +90,7 @@ impl DecoderFactory for GrpcDecoderFactory
         let function = path.next().unwrap();
         let service = path.next().unwrap();
         let service = self.ctx.get_service(service)?;
-        let function = service.rpcs.iter().find(|f| f.name == function)?;
+        let function = service.rpc_by_name(function)?;
 
         let ty = match msg.part {
             RequestPart::Request => &function.input.message,
@@ -133,7 +134,7 @@ impl GrpcDecoder
             }
             cursor += 5;
 
-            values.push(self.msg_ref.decode(&b[cursor..cursor + len], &self.ctx));
+            values.push(self.ctx.decode(self.msg_ref, &b[cursor..cursor + len]));
             cursor += len;
         }
 
@@ -228,7 +229,7 @@ impl ToText for protofish::decode::MessageValue
         indent += 1;
         for f in &self.fields {
             builder.push(Span::raw("  ".repeat(indent)));
-            builder.push(match msg.fields.get(&f.number) {
+            builder.push(match msg.get_field(f.number) {
                 Some(f) => Span::raw(&f.name),
                 None => Span::raw(format!("[#{}]", f.number)),
             });
@@ -245,8 +246,7 @@ impl ToText for protofish::decode::MessageValue
         let msg = ctx.resolve_message(self.msg_ref);
         std::iter::once(msg.name.clone())
             .chain(self.fields.iter().flat_map(|field| {
-                msg.fields
-                    .get(&field.number)
+                msg.get_field(field.number)
                     .map(|f| f.name.clone())
                     .into_iter()
                     .chain(field.value.to_index(ctx))
@@ -262,7 +262,7 @@ impl ToText for protofish::decode::EnumValue
         // Panic here should indicate that msg_ref is for a different context.
         let e = ctx.resolve_enum(self.enum_ref);
 
-        match e.field_by_value(self.value) {
+        match e.get_field_by_value(self.value) {
             Some(field) => builder.push(Span::raw(&field.name)),
             None => builder.push(Span::raw(self.value.to_string())),
         }
@@ -272,7 +272,7 @@ impl ToText for protofish::decode::EnumValue
     {
         let e = ctx.resolve_enum(self.enum_ref);
 
-        match e.field_by_value(self.value) {
+        match e.get_field_by_value(self.value) {
             Some(field) => vec![field.name.to_string()],
             None => vec![],
         }
@@ -305,7 +305,7 @@ impl ToText for protofish::decode::Value
             Self::Message(v) => return v.to_text(ctx, indent, builder),
 
             Self::Unknown(unk) => Span::raw(format!("!! {:?}", unk)),
-            Self::Incomplete(bytes) => Span::raw(format!("Incomplete({:X})", bytes)),
+            Self::Incomplete(_, bytes) => Span::raw(format!("Incomplete({:X})", bytes)),
         })
     }
 
@@ -333,7 +333,7 @@ impl ToText for protofish::decode::Value
             Self::Message(v) => return v.to_index(ctx),
 
             Self::Unknown(unk) => format!("!! {:?}", unk),
-            Self::Incomplete(bytes) => format!("Incomplete({:X})", bytes),
+            Self::Incomplete(_, bytes) => format!("Incomplete({:X})", bytes),
         }]
     }
 }
@@ -386,5 +386,295 @@ impl ToText for protofish::decode::PackedArray
         };
 
         v
+    }
+}
+
+#[cfg(test)]
+mod test
+{
+    use super::*;
+    use crate::session::{RequestPart, Status};
+    use chrono::Local;
+    use http::{HeaderMap, HeaderValue, Method};
+    use uuid::Uuid;
+
+    // proto3 `optional` fields (protoc 3.15+) used to fail with
+    // "expected emptyStatement, option, repeated, ..." (issue #25).
+    const PROTO: &str = r#"
+        syntax = "proto3";
+        package test;
+
+        enum Kind {
+            KIND_UNKNOWN = 0;
+            KIND_ADMIN = 1;
+        }
+
+        message Person {
+            string name = 1;
+            optional string nickname = 2;
+            optional int32 age = 3;
+            Kind kind = 4;
+            optional Kind role = 5;
+        }
+
+        service People {
+            rpc Get (Person) returns (Person);
+        }
+    "#;
+
+    fn factory_from_files(protos: &[&str]) -> Result<Option<Box<dyn DecoderFactory>>>
+    {
+        let dir = std::env::temp_dir().join(format!("proxide-test-{}", Uuid::new_v4()));
+        std::fs::create_dir(&dir).unwrap();
+        for (i, proto) in protos.iter().enumerate() {
+            std::fs::write(dir.join(format!("{}.proto", i)), proto).unwrap();
+        }
+
+        let glob = dir.join("*.proto");
+        let app = setup_args(Command::new("test"));
+        let matches = app.get_matches_from(["test", "--grpc", glob.to_str().unwrap()]);
+        let result = initialize(&matches);
+
+        std::fs::remove_dir_all(&dir).unwrap();
+        result
+    }
+
+    fn factory_from_file(proto: &str) -> Result<Option<Box<dyn DecoderFactory>>>
+    {
+        factory_from_files(&[proto])
+    }
+
+    /// Wraps a protobuf payload into an uncompressed gRPC frame.
+    fn grpc_frame(payload: &[u8]) -> Vec<u8>
+    {
+        let mut frame = vec![0];
+        frame.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+        frame.extend_from_slice(payload);
+        frame
+    }
+
+    fn request(path: &str) -> RequestData
+    {
+        RequestData {
+            uuid: Uuid::new_v4(),
+            connection_uuid: Uuid::new_v4(),
+            method: Method::POST,
+            uri: path.parse().unwrap(),
+            start_timestamp: Local::now(),
+            end_timestamp: None,
+            status: Status::Succeeded,
+        }
+    }
+
+    fn message(part: RequestPart, content: &[u8]) -> MessageData
+    {
+        let mut headers = HeaderMap::new();
+        headers.insert("content-type", HeaderValue::from_static("application/grpc"));
+        let mut msg = MessageData::new(part).with_headers(headers);
+        msg.content.extend_from_slice(content);
+        msg
+    }
+
+    fn text_to_string(text: &Text) -> String
+    {
+        text.lines
+            .iter()
+            .flat_map(|line| line.0.iter().map(|span| span.content.as_ref()))
+            .collect()
+    }
+
+    #[test]
+    fn proto3_optional_fields_are_supported()
+    {
+        let factory = factory_from_file(PROTO)
+            .expect("proto with optional fields should parse")
+            .expect("--grpc was given, factory should exist");
+
+        // name = "ann", nickname = "a", age = 0 (explicitly present), kind = KIND_ADMIN
+        let payload = [
+            0x0A, 0x03, b'a', b'n', b'n', // field 1, string
+            0x12, 0x01, b'a', // field 2, string
+            0x18, 0x00, // field 3, varint
+            0x20, 0x01, // field 4, enum
+        ];
+        let req = request("/test.People/Get");
+
+        for part in [RequestPart::Request, RequestPart::Response] {
+            let msg = message(part, &grpc_frame(&payload));
+            let decoder = factory
+                .try_create(&req, &msg)
+                .expect("gRPC decoder should be created for a known method");
+
+            let text = text_to_string(&decoder.decode(&msg));
+            for expected in [
+                "Person {",
+                "name: \"ann\"",
+                "nickname: \"a\"",
+                "age: 0",
+                "kind: KIND_ADMIN",
+            ] {
+                assert!(text.contains(expected), "{:?} not in:\n{}", expected, text);
+            }
+
+            let index = decoder.index(&msg);
+            for expected in [
+                "Person",
+                "name",
+                "\"ann\"",
+                "nickname",
+                "age",
+                "kind",
+                "KIND_ADMIN",
+            ] {
+                assert!(
+                    index.iter().any(|i| i == expected),
+                    "{:?} not in {:?}",
+                    expected,
+                    index
+                );
+            }
+        }
+    }
+
+    /// Decodes `payload` as a `test.Person` request and returns the message body as trimmed lines,
+    /// from `Person {` to the closing `}`, together with the search index.
+    fn decode_person(factory: &dyn DecoderFactory, payload: &[u8]) -> (Vec<String>, Vec<String>)
+    {
+        let msg = message(RequestPart::Request, &grpc_frame(payload));
+        let decoder = factory
+            .try_create(&request("/test.People/Get"), &msg)
+            .unwrap();
+
+        let text = text_to_string(&decoder.decode(&msg));
+        let lines: Vec<String> = text
+            .lines()
+            .map(|l| l.trim().to_string())
+            .skip_while(|l| l != "Person {")
+            .take_while(|l| !l.is_empty())
+            .collect();
+        (lines, decoder.index(&msg))
+    }
+
+    #[test]
+    fn proto3_optional_fields_unset_are_omitted()
+    {
+        let factory = factory_from_file(PROTO).unwrap().unwrap();
+
+        /// (description, encoded fields on the wire, expected field lines in the output)
+        type Case<'a> = (&'a str, &'a [&'a [u8]], &'a [&'a str]);
+
+        // Field encodings for test.Person.
+        const NAME: &[u8] = &[0x0A, 0x03, b'a', b'n', b'n']; // name = "ann"
+        const NICK: &[u8] = &[0x12, 0x01, b'a']; // nickname = "a"
+        const NICK_EMPTY: &[u8] = &[0x12, 0x00]; // nickname = "" (present)
+        const AGE_ZERO: &[u8] = &[0x18, 0x00]; // age = 0 (present)
+        const AGE: &[u8] = &[0x18, 0x2A]; // age = 42
+        const ROLE_DEFAULT: &[u8] = &[0x28, 0x00]; // role = KIND_UNKNOWN (present)
+
+        #[rustfmt::skip]
+        let cases: &[Case] = &[
+            ("all unset, empty message", &[], &[]),
+            ("only non-optional set", &[NAME], &["name: \"ann\""]),
+            ("nickname set, age unset", &[NAME, NICK], &["name: \"ann\"", "nickname: \"a\""]),
+            ("age set, nickname unset", &[AGE], &["age: 42"]),
+            // Explicit default values are on the wire for optional fields and must be shown,
+            // unlike unset ones.
+            ("explicit empty string", &[NICK_EMPTY], &["nickname: \"\""]),
+            ("explicit zero", &[AGE_ZERO], &["age: 0"]),
+            ("explicit default enum", &[ROLE_DEFAULT], &["role: KIND_UNKNOWN"]),
+            ("all optionals present", &[NICK, AGE_ZERO, ROLE_DEFAULT],
+                &["nickname: \"a\"", "age: 0", "role: KIND_UNKNOWN"]),
+        ];
+
+        for (name, fields, expected_fields) in cases {
+            let payload: Vec<u8> = fields.concat();
+            let (lines, index) = decode_person(factory.as_ref(), &payload);
+
+            let mut expected = vec!["Person {".to_string()];
+            expected.extend(expected_fields.iter().map(|f| f.to_string()));
+            expected.push("}".to_string());
+            assert_eq!(lines, expected, "case: {}", name);
+
+            // Unset fields must not show up in the search index either.
+            for field in ["nickname", "age", "role"] {
+                let is_set = expected_fields
+                    .iter()
+                    .any(|f| f.starts_with(&format!("{}:", field)));
+                assert_eq!(
+                    index.iter().any(|i| i == field),
+                    is_set,
+                    "case: {}: index entry for {:?} in {:?}",
+                    name,
+                    field,
+                    index
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn unknown_method_has_no_decoder()
+    {
+        let factory = factory_from_file(PROTO).unwrap().unwrap();
+        let msg = message(RequestPart::Request, &grpc_frame(&[]));
+        assert!(factory
+            .try_create(&request("/test.People/Missing"), &msg)
+            .is_none());
+        assert!(factory
+            .try_create(&request("/test.Missing/Get"), &msg)
+            .is_none());
+    }
+
+    #[test]
+    fn invalid_proto_is_a_configuration_error()
+    {
+        let err = factory_from_file("message {").err().expect("should fail");
+        assert!(err.to_string().contains("grpc"), "{}", err);
+    }
+
+    #[test]
+    fn decodes_recorded_grpc_traffic()
+    {
+        // Minimal stand-in for google/protobuf/duration.proto, which rust_grpc.proto imports.
+        const DURATION: &str = r#"
+            syntax = "proto3";
+            package google.protobuf;
+            message Duration {
+                int64 seconds = 1;
+                int32 nanos = 2;
+            }
+        "#;
+        let rust_grpc = std::fs::read_to_string("test/rust_grpc/proto/rust_grpc.proto").unwrap();
+        let factory = factory_from_files(&[&rust_grpc, DURATION])
+            .unwrap()
+            .unwrap();
+
+        // Recorded with proxide 0.3.0 against the test/rust_grpc server.
+        let session =
+            crate::session::serialization::read_file(&"test/data/capture-v02-proxide-0.3.0.bin")
+                .unwrap();
+
+        let call = session
+            .requests
+            .items
+            .iter()
+            .find(|r| r.request_data.uri.path() == "/rust_grpc.TestService/GetDiagnostics")
+            .expect("capture should contain a GetDiagnostics call");
+        let (req, response) = (&call.request_data, &call.response_msg);
+
+        let decoder = factory.try_create(req, response).unwrap();
+        let text = text_to_string(&decoder.decode(response));
+        for expected in [
+            // send_message_calls and clients were zero/empty in this recording, and proto3 omits
+            // default values from the wire.
+            "DiagnosticsResponse {",
+            "uptime: Duration {",
+            "seconds: 2",
+            "nanos: ",
+        ] {
+            assert!(text.contains(expected), "{:?} not in:\n{}", expected, text);
+        }
+        assert!(!text.contains("Incomplete"), "{}", text);
+        assert!(!text.contains("[#"), "unknown fields in:\n{}", text);
     }
 }
