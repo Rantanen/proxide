@@ -414,6 +414,7 @@ mod test
             optional string nickname = 2;
             optional int32 age = 3;
             Kind kind = 4;
+            optional Kind role = 5;
         }
 
         service People {
@@ -529,6 +530,82 @@ mod test
                     index.iter().any(|i| i == expected),
                     "{:?} not in {:?}",
                     expected,
+                    index
+                );
+            }
+        }
+    }
+
+    /// Decodes `payload` as a `test.Person` request and returns the message body as trimmed lines,
+    /// from `Person {` to the closing `}`, together with the search index.
+    fn decode_person(factory: &dyn DecoderFactory, payload: &[u8]) -> (Vec<String>, Vec<String>)
+    {
+        let msg = message(RequestPart::Request, &grpc_frame(payload));
+        let decoder = factory
+            .try_create(&request("/test.People/Get"), &msg)
+            .unwrap();
+
+        let text = text_to_string(&decoder.decode(&msg));
+        let lines: Vec<String> = text
+            .lines()
+            .map(|l| l.trim().to_string())
+            .skip_while(|l| l != "Person {")
+            .take_while(|l| !l.is_empty())
+            .collect();
+        (lines, decoder.index(&msg))
+    }
+
+    #[test]
+    fn proto3_optional_fields_unset_are_omitted()
+    {
+        let factory = factory_from_file(PROTO).unwrap().unwrap();
+
+        /// (description, encoded fields on the wire, expected field lines in the output)
+        type Case<'a> = (&'a str, &'a [&'a [u8]], &'a [&'a str]);
+
+        // Field encodings for test.Person.
+        const NAME: &[u8] = &[0x0A, 0x03, b'a', b'n', b'n']; // name = "ann"
+        const NICK: &[u8] = &[0x12, 0x01, b'a']; // nickname = "a"
+        const NICK_EMPTY: &[u8] = &[0x12, 0x00]; // nickname = "" (present)
+        const AGE_ZERO: &[u8] = &[0x18, 0x00]; // age = 0 (present)
+        const AGE: &[u8] = &[0x18, 0x2A]; // age = 42
+        const ROLE_DEFAULT: &[u8] = &[0x28, 0x00]; // role = KIND_UNKNOWN (present)
+
+        #[rustfmt::skip]
+        let cases: &[Case] = &[
+            ("all unset, empty message", &[], &[]),
+            ("only non-optional set", &[NAME], &["name: \"ann\""]),
+            ("nickname set, age unset", &[NAME, NICK], &["name: \"ann\"", "nickname: \"a\""]),
+            ("age set, nickname unset", &[AGE], &["age: 42"]),
+            // Explicit default values are on the wire for optional fields and must be shown,
+            // unlike unset ones.
+            ("explicit empty string", &[NICK_EMPTY], &["nickname: \"\""]),
+            ("explicit zero", &[AGE_ZERO], &["age: 0"]),
+            ("explicit default enum", &[ROLE_DEFAULT], &["role: KIND_UNKNOWN"]),
+            ("all optionals present", &[NICK, AGE_ZERO, ROLE_DEFAULT],
+                &["nickname: \"a\"", "age: 0", "role: KIND_UNKNOWN"]),
+        ];
+
+        for (name, fields, expected_fields) in cases {
+            let payload: Vec<u8> = fields.concat();
+            let (lines, index) = decode_person(factory.as_ref(), &payload);
+
+            let mut expected = vec!["Person {".to_string()];
+            expected.extend(expected_fields.iter().map(|f| f.to_string()));
+            expected.push("}".to_string());
+            assert_eq!(lines, expected, "case: {}", name);
+
+            // Unset fields must not show up in the search index either.
+            for field in ["nickname", "age", "role"] {
+                let is_set = expected_fields
+                    .iter()
+                    .any(|f| f.starts_with(&format!("{}:", field)));
+                assert_eq!(
+                    index.iter().any(|i| i == field),
+                    is_set,
+                    "case: {}: index entry for {:?} in {:?}",
+                    name,
+                    field,
                     index
                 );
             }
