@@ -199,15 +199,15 @@ Releases are built by the [Release workflow](.github/workflows/release.yml).
    there.
 2. Optional: do a test run by pushing to a `release-test-X.Y.Z` branch:
    ```
-   git push origin master:release-test-0.4.1
+   git push origin master:release-test-0.4.2
    ```
-   This builds the binaries into a draft release tagged `test-0.4.1`. Nothing
+   This builds the binaries into a draft release tagged `test-0.4.2`. Nothing
    is published to GitHub or crates.io. Delete the draft release and the branch
    when done.
 3. Push a tag matching the version:
    ```
-   git tag 0.4.1
-   git push origin 0.4.1
+   git tag 0.4.2
+   git push origin 0.4.2
    ```
    The workflow checks that the tag matches `Cargo.toml` and builds the Linux
    and Windows archives with their `.sha256` files. It then publishes the
